@@ -31,11 +31,14 @@ HOME_CACHE_TTL_SECONDS = 15 * 60
 DETAIL_CACHE_TTL_SECONDS = 15 * 60
 SEARCH_CACHE_TTL_SECONDS = 5 * 60
 STREAM_PROXY_TTL_SECONDS = 30 * 60
+PLAYABLE_CACHE_TTL_SECONDS = DETAIL_CACHE_TTL_SECONDS
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 PAGE_MOVIE_LIMIT = 100
 SEARCH_PAGE_SIZE = 20
 HOME_PAGE_FETCH_LIMIT = 5
+PLAYABLE_BATCH_SIZE = 8
+DIRECT_SOURCE_PREFIX = "moviebox direct"
 
 CATEGORY_BLURBS = {
     "Trending": "Fresh picks pulled from the latest Moviebox homepage feed.",
@@ -56,6 +59,7 @@ _cache_lock = threading.Lock()
 _cache: dict[str, Any] = {
     "home": {"timestamp": 0.0, "value": None},
     "detail": {},
+    "playable": {},
     "search": {},
     "stream_tokens": {},
 }
@@ -240,25 +244,25 @@ def build_genre_sections(catalog: list[dict[str, Any]], categories: list[str]) -
     return sections
 
 
-def build_home_payload(raw_home_pages: list[dict[str, Any]]) -> dict[str, Any]:
+def build_home_payload(
+    catalog: list[dict[str, Any]],
+    hero_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    catalog = dedupe_movies(catalog)
     hero_movies: list[dict[str, Any]] = []
-    catalog: list[dict[str, Any]] = []
 
-    for page_index, raw_home in enumerate(raw_home_pages):
-        for item in raw_home.get("items", []):
-            banner = item.get("banner") or {}
-            if page_index == 0:
-                for banner_item in banner.get("banners", []):
-                    subject = banner_item.get("subject")
-                    if isinstance(subject, dict):
-                        hero_movies.append(normalize_subject(subject))
-
-            for subject in item.get("subjects", []):
-                if isinstance(subject, dict):
-                    catalog.append(normalize_subject(subject))
+    if hero_ids:
+        by_id = {
+            str(movie.get("id") or ""): movie
+            for movie in catalog
+            if movie.get("id")
+        }
+        for movie_id in hero_ids:
+            movie = by_id.get(movie_id)
+            if movie is not None:
+                hero_movies.append(movie)
 
     hero_movies = dedupe_movies(hero_movies)
-    catalog = dedupe_movies(hero_movies + catalog)
     categories = derive_categories(catalog)
     sections = build_genre_sections(catalog, categories)
 
@@ -279,6 +283,7 @@ async def fetch_home_payload() -> dict[str, Any]:
     async with MovieBoxHttpClient(timeout=30) as client_session:
         raw_pages: list[dict[str, Any]] = []
         catalog_size = 0
+        hero_ids: list[str] = []
 
         for page_number in range(1, HOME_PAGE_FETCH_LIMIT + 1):
             homepage = Homepage(client_session)
@@ -292,6 +297,16 @@ async def fetch_home_payload() -> dict[str, Any]:
 
             raw_pages.append(raw_home)
 
+            if page_number == 1:
+                for item in raw_home.get("items", []):
+                    banner = item.get("banner") or {}
+                    for banner_item in banner.get("banners", []):
+                        subject = banner_item.get("subject")
+                        if isinstance(subject, dict):
+                            subject_id = str(subject.get("subjectId") or "").strip()
+                            if subject_id:
+                                hero_ids.append(subject_id)
+
             page_catalog_size = sum(
                 len(item.get("subjects", []))
                 for item in raw_home.get("items", [])
@@ -301,7 +316,20 @@ async def fetch_home_payload() -> dict[str, Any]:
             if catalog_size >= PAGE_MOVIE_LIMIT:
                 break
 
-        return build_home_payload(raw_pages)
+        candidate_subjects: list[dict[str, Any]] = []
+        for raw_home in raw_pages:
+            for item in raw_home.get("items", []):
+                for subject in item.get("subjects", []):
+                    if isinstance(subject, dict):
+                        candidate_subjects.append(subject)
+
+        direct_catalog = await filter_subjects_to_direct_movies(
+            client_session,
+            candidate_subjects,
+            limit=PAGE_MOVIE_LIMIT,
+        )
+
+        return build_home_payload(direct_catalog, hero_ids)
 
 
 def resolve_home(force_refresh: bool = False) -> dict[str, Any]:
@@ -441,6 +469,81 @@ def build_named_downloadable_resource_options(
     return options
 
 
+def is_moviebox_direct_source(source: Any) -> bool:
+    return isinstance(source, str) and source.strip().lower().startswith(
+        DIRECT_SOURCE_PREFIX
+    )
+
+
+def is_direct_playable_quality(quality: dict[str, Any]) -> bool:
+    if not isinstance(quality, dict):
+        return False
+
+    play_url = first_url(
+        quality.get("playUrl"),
+        quality.get("downloadUrl"),
+        quality.get("sourceUrl"),
+    )
+    if not play_url:
+        return False
+
+    stream_type = str(quality.get("streamType") or "").strip().lower()
+    if stream_type == "dash":
+        return False
+
+    return is_direct_media_url(play_url)
+
+
+def filter_direct_moviebox_options(
+    options: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+
+    for option in options or []:
+        if not isinstance(option, dict):
+            continue
+        if not is_moviebox_direct_source(option.get("source")):
+            continue
+
+        qualities = [
+            quality
+            for quality in option.get("qualities") or []
+            if is_direct_playable_quality(quality)
+        ]
+        if not qualities:
+            continue
+
+        resolutions = sorted(
+            {
+                int(quality.get("resolution") or 0)
+                for quality in qualities
+                if quality.get("resolution")
+            },
+            reverse=True,
+        )
+        best_quality = qualities[0]
+
+        filtered.append(
+            {
+                **option,
+                "downloadUrl": first_url(
+                    best_quality.get("downloadUrl"),
+                    best_quality.get("playUrl"),
+                    option.get("downloadUrl"),
+                ),
+                "resourceLink": first_url(
+                    best_quality.get("sourceUrl"),
+                    best_quality.get("playUrl"),
+                    option.get("resourceLink"),
+                ),
+                "resolutions": resolutions,
+                "qualities": qualities,
+            }
+        )
+
+    return filtered
+
+
 def normalize_resolution_label(value: Any) -> int:
     if isinstance(value, int):
         return value
@@ -578,6 +681,107 @@ async def fetch_movie_playback_options(
 
     options.extend(build_resource_options(detail))
     return options
+
+
+def copy_cached_playable_movie(subject_id: str) -> dict[str, Any] | None | object:
+    with _cache_lock:
+        entry = _cache["playable"].get(subject_id)
+        if entry and not stale(entry, PLAYABLE_CACHE_TTL_SECONDS):
+            value = entry.get("value")
+            if isinstance(value, dict):
+                return deepcopy(value)
+            return None
+    return Ellipsis
+
+
+def store_cached_playable_movie(
+    subject_id: str,
+    movie: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    with _cache_lock:
+        _cache["playable"][subject_id] = {
+            "timestamp": time.time(),
+            "value": deepcopy(movie) if isinstance(movie, dict) else None,
+        }
+    return deepcopy(movie) if isinstance(movie, dict) else None
+
+
+async def fetch_direct_playable_movie(
+    client_session: MovieBoxHttpClient,
+    subject_id: str,
+) -> dict[str, Any] | None:
+    cached = copy_cached_playable_movie(subject_id)
+    if cached is not Ellipsis:
+        return cached
+
+    try:
+        detail = await ItemDetails(client_session).get_content(subject_id)
+    except Exception:
+        return store_cached_playable_movie(subject_id, None)
+
+    if is_series(detail.get("subjectType")):
+        return store_cached_playable_movie(subject_id, None)
+
+    resource_options = filter_direct_moviebox_options(
+        await fetch_movie_playback_options(client_session, detail)
+    )
+    if not resource_options:
+        return store_cached_playable_movie(subject_id, None)
+
+    movie = normalize_subject(detail)
+    movie["resourceOptions"] = resource_options
+
+    best_quality = resource_options[0]["qualities"][0]
+    movie["downloadUrl"] = first_url(
+        best_quality.get("downloadUrl"),
+        best_quality.get("playUrl"),
+        movie.get("downloadUrl"),
+    )
+    movie["detailUrl"] = first_url(movie.get("detailUrl"), detail.get("detailUrl"))
+
+    return store_cached_playable_movie(subject_id, movie)
+
+
+async def filter_subjects_to_direct_movies(
+    client_session: MovieBoxHttpClient,
+    subjects: list[dict[str, Any]],
+    limit: int = PAGE_MOVIE_LIMIT,
+) -> list[dict[str, Any]]:
+    candidates: list[str] = []
+    seen_ids: set[str] = set()
+
+    for subject in subjects:
+        if not isinstance(subject, dict):
+            continue
+
+        subject_id = str(subject.get("subjectId") or subject.get("id") or "").strip()
+        if not subject_id or subject_id in seen_ids:
+            continue
+        if is_series(subject.get("subjectType")):
+            continue
+
+        seen_ids.add(subject_id)
+        candidates.append(subject_id)
+
+    direct_movies: list[dict[str, Any]] = []
+
+    for index in range(0, len(candidates), PLAYABLE_BATCH_SIZE):
+        batch_ids = candidates[index:index + PLAYABLE_BATCH_SIZE]
+        batch_results = await asyncio.gather(
+            *(
+                fetch_direct_playable_movie(client_session, subject_id)
+                for subject_id in batch_ids
+            ),
+            return_exceptions=True,
+        )
+
+        for result in batch_results:
+            if isinstance(result, dict):
+                direct_movies.append(result)
+                if len(direct_movies) >= limit:
+                    return direct_movies[:limit]
+
+    return direct_movies[:limit]
 
 
 def select_best_subtitle_match(items: list[Any], movie: dict[str, Any]) -> Any | None:
@@ -772,22 +976,16 @@ def neighbor_ids(movie_id: str, catalog: list[dict[str, Any]]) -> tuple[str, str
 async def fetch_detail_payload(subject_id: str, home: dict[str, Any]) -> dict[str, Any]:
     async with MovieBoxHttpClient(timeout=30) as client_session:
         detail = await ItemDetails(client_session, include_seasons=True).get_content(subject_id)
-        resource_options = await fetch_movie_playback_options(client_session, detail)
+        resource_options = filter_direct_moviebox_options(
+            await fetch_movie_playback_options(client_session, detail)
+        )
         series_items = await fetch_series_items(client_session, detail, normalize_subject(detail))
 
     movie = normalize_subject(detail)
     movie["subtitleOptions"] = await fetch_subtitle_options(movie)
     movie["resourceOptions"] = resource_options
-    direct_options = [
-        option
-        for option in resource_options
-        if any(
-            quality.get("streamType") != "dash" and is_direct_media_url(quality.get("playUrl"))
-            for quality in option.get("qualities", [])
-        )
-    ]
-    if direct_options:
-        best_quality = direct_options[0]["qualities"][0]
+    if resource_options:
+        best_quality = resource_options[0]["qualities"][0]
         movie["downloadUrl"] = best_quality.get("downloadUrl") or movie.get("downloadUrl") or ""
     movie["dubOptions"] = [
         dub.get("lanName") or dub.get("lanCode") or ""
@@ -855,23 +1053,28 @@ async def fetch_search_payload(query: str) -> dict[str, Any]:
             subject_type=SubjectType.ALL,
             per_page=SEARCH_PAGE_SIZE,
         )
-        normalized: list[dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
 
         async for content in search.get_content_model_all():
             page_items = [
-                normalize_subject(item.model_dump())
+                item.model_dump()
                 for item in content.items
                 if str(item.subject_type.value)
-                in {str(int(SubjectType.MOVIES)), str(int(SubjectType.TV_SERIES))}
+                == str(int(SubjectType.MOVIES))
             ]
-            normalized.extend(page_items)
-            normalized = dedupe_movies(normalized)
-            if len(normalized) >= PAGE_MOVIE_LIMIT:
+            candidates.extend(page_items)
+            if len(dedupe_movies([normalize_subject(item) for item in candidates])) >= PAGE_MOVIE_LIMIT:
                 break
+
+        direct_movies = await filter_subjects_to_direct_movies(
+            client_session,
+            candidates,
+            limit=PAGE_MOVIE_LIMIT,
+        )
 
     return {
         "query": query,
-        "items": normalized[:PAGE_MOVIE_LIMIT],
+        "items": direct_movies[:PAGE_MOVIE_LIMIT],
     }
 
 

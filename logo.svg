@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Flixora logo</title>
+  <desc id="desc">Red square with a white stylized F and arrow mark.</desc>
+  <rect width="256" height="256" fill="#ef1d1d"/>
+  <path
+    d="M52 98c14-45 48-68 99-68h46l-17 18h-31c-35 0-60 13-76 38z"
+    fill="#fff"
+  />
+  <path
+    d="M86 46c12-14 30-22 55-22h61l22 18-22 18h-19V48h-38c-23 0-41 7-54 21z"
+    fill="#fff"
+  />
+  <path
+    d="M62 162c14-38 42-57 84-57h44l-16 18h-28c-28 0-49 11-64 33z"
+    fill="#fff"
+  />
+  <path
+    d="M85 110c11-12 27-19 48-19h53l-17 18h-32c-20 0-35 6-45 17z"
+    fill="#fff"
+  />
+  <path
+    d="M49 219c14-48 44-73 92-73h35l-17 18h-16c-25 0-44 11-57 34z"
+    fill="#fff"
+  />
+  <path
+    d="M80 171c10-12 25-19 46-19h41l-16 18h-21c-18 0-31 5-40 16z"
+    fill="#fff"
+  />
+</svg>
