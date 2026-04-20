@@ -165,7 +165,12 @@ def normalize_subject(subject: dict[str, Any]) -> dict[str, Any]:
     )
 
     return {
-        "id": str(subject.get("subjectId") or ""),
+        "id": str(
+            subject.get("subjectId")
+            or subject.get("subject_id")
+            or subject.get("id")
+            or ""
+        ),
         "title": clean_title(subject.get("title")),
         "poster": poster,
         "backdrop": backdrop or poster,
@@ -754,10 +759,15 @@ async def filter_subjects_to_direct_movies(
         if not isinstance(subject, dict):
             continue
 
-        subject_id = str(subject.get("subjectId") or subject.get("id") or "").strip()
+        subject_id = str(
+            subject.get("subjectId")
+            or subject.get("subject_id")
+            or subject.get("id")
+            or ""
+        ).strip()
         if not subject_id or subject_id in seen_ids:
             continue
-        if is_series(subject.get("subjectType")):
+        if is_series(subject.get("subjectType") or subject.get("subject_type")):
             continue
 
         seen_ids.add(subject_id)
@@ -1050,7 +1060,7 @@ async def fetch_search_payload(query: str) -> dict[str, Any]:
         search = Search(
             client_session,
             query,
-            subject_type=SubjectType.ALL,
+            subject_type=SubjectType.MOVIES,
             per_page=SEARCH_PAGE_SIZE,
         )
         candidates: list[dict[str, Any]] = []
@@ -1059,8 +1069,6 @@ async def fetch_search_payload(query: str) -> dict[str, Any]:
             page_items = [
                 item.model_dump()
                 for item in content.items
-                if str(item.subject_type.value)
-                == str(int(SubjectType.MOVIES))
             ]
             candidates.extend(page_items)
             if len(dedupe_movies([normalize_subject(item) for item in candidates])) >= PAGE_MOVIE_LIMIT:
