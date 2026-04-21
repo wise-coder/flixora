@@ -1,3 +1,3 @@
-127.0.0.1 - - [15/Apr/2026 00:40:27] "GET /api/movie?id=568731759475578184 HTTP/1.1" 200 -
-127.0.0.1 - - [15/Apr/2026 00:40:49] "GET /api/dash-manifest?token=73269bea87094787aaef0484dde391a0 HTTP/1.1" 200 -
-127.0.0.1 - - [15/Apr/2026 00:44:08] "GET /api/dash/73269bea87094787aaef0484dde391a0/init-stream0.m4s HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 08:17:53] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 08:18:05] "GET /config.js HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 08:19:42] "GET /api/home HTTP/1.1" 200 -

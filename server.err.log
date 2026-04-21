@@ -1,7 +1,11 @@
-127.0.0.1 - - [21/Apr/2026 07:48:39] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:49:54] "GET /api/home HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:35:41] "GET /index.html HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:35:41] "GET /styles.css?v=20260421a HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:35:41] "GET /logo.svg HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:35:41] "GET /config.js?v=20260421b HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:35:41] "GET /script.js?v=20260421b HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:36:03] "GET /api/home HTTP/1.1" 200 -
 ----------------------------------------
-Exception occurred during processing of request from ('127.0.0.1', 59690)
+Exception occurred during processing of request from ('127.0.0.1', 61487)
 Traceback (most recent call last):
   File "C:\Python313\Lib\socketserver.py", line 697, in process_request_thread
     self.finish_request(request, client_address)
@@ -9,7 +13,7 @@ Traceback (most recent call last):
   File "C:\Python313\Lib\socketserver.py", line 362, in finish_request
     self.RequestHandlerClass(request, client_address, self)
     ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\HP\Downloads\flixora\server.py", line 1132, in __init__
+  File "C:\Users\HP\Downloads\flixora\server.py", line 1370, in __init__
     super().__init__(*args, directory=str(ROOT_DIR), **kwargs)
     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "C:\Python313\Lib\http\server.py", line 683, in __init__
@@ -24,16 +28,16 @@ Traceback (most recent call last):
   File "C:\Python313\Lib\http\server.py", line 435, in handle_one_request
     method()
     ~~~~~~^^
-  File "C:\Users\HP\Downloads\flixora\server.py", line 1143, in do_GET
+  File "C:\Users\HP\Downloads\flixora\server.py", line 1411, in do_GET
     self.handle_api(parsed)
     ~~~~~~~~~~~~~~~^^^^^^^^
-  File "C:\Users\HP\Downloads\flixora\server.py", line 1213, in handle_api
+  File "C:\Users\HP\Downloads\flixora\server.py", line 1493, in handle_api
     self.respond_json(payload)
     ~~~~~~~~~~~~~~~~~^^^^^^^^^
-  File "C:\Users\HP\Downloads\flixora\server.py", line 1338, in respond_json
+  File "C:\Users\HP\Downloads\flixora\server.py", line 1618, in respond_json
     self.end_headers()
     ~~~~~~~~~~~~~~~~^^
-  File "C:\Users\HP\Downloads\flixora\server.py", line 1138, in end_headers
+  File "C:\Users\HP\Downloads\flixora\server.py", line 1402, in end_headers
     super().end_headers()
     ~~~~~~~~~~~~~~~~~~~^^
   File "C:\Python313\Lib\http\server.py", line 549, in end_headers
@@ -47,29 +51,131 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~^^^
 ConnectionResetError: [WinError 10054] An existing connection was forcibly closed by the remote host
 ----------------------------------------
-127.0.0.1 - - [21/Apr/2026 07:49:55] "GET /api/home HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:50:08] "GET /index.html HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:50:08] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:50:09] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:50:09] "GET /styles.css?v=20260421a HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:50:09] "GET /logo.svg HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:50:09] "GET /script.js?v=20260421a HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:50:09] "GET /api/home HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:50:48] "GET /index.html HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:50:48] "GET /styles.css?v=20260421a HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:50:48] "GET /logo.svg HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:50:48] "GET /script.js?v=20260421a HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:50:48] "GET /api/home HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:50:49] "GET /api/category?category=Trending HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:50:49] "GET /api/home HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:51:01] "GET /api/home HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:51:12] "GET /api/movie?id=568731759475578184 HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:53:07] "GET /category.html?category=Sci-Fi HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:53:07] "GET /styles.css?v=20260421a HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:53:07] "GET /script.js?v=20260421a HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:53:07] "GET /logo.svg HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:53:08] "GET /api/home HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:53:08] "GET /api/category?category=Sci-Fi HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:53:24] "GET /styles.css?v=20260421a HTTP/1.1" 200 -
-127.0.0.1 - - [21/Apr/2026 07:53:24] code 404, message File not found
-127.0.0.1 - - [21/Apr/2026 07:53:24] "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 -
+127.0.0.1 - - [21/Apr/2026 09:36:04] "GET /api/home HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:36:04] "GET /api/home HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:36:21] "GET /movie.html?id=5279949899776280312 HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:36:21] "GET /styles.css?v=20260421a HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:36:21] "GET /script.js?v=20260421b HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:36:21] "GET /config.js?v=20260421b HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:36:21] "GET /logo.svg HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:36:21] "GET /api/home HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:36:23] "GET /api/home HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:36:30] "GET /api/movie?id=5279949899776280312 HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:36:30] "POST /api/movie-view?id=5279949899776280312 HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:36:50] "GET /api/media?url=https%3A%2F%2Fbcdn.hakunaymatata.com%2Fresource%2Fh265%2F86927c134b6aea40ca9d13ad59d9fdd7.mp4%3Fsign%3D95b16502d2e2c34be37d3e32f4ea6f2a%26t%3D1776756804&filename=Aazhi+%5BCAM%5D.mp4 HTTP/1.1" 206 -
+127.0.0.1 - - [21/Apr/2026 09:37:00] "GET /logo.svg HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:37:47] "GET /index.html HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:37:47] code 502, message Unable to proxy media from upstream source
+127.0.0.1 - - [21/Apr/2026 09:37:47] "GET /api/media?url=https%3A%2F%2Fbcdn.hakunaymatata.com%2Fresource%2Fh265%2F86927c134b6aea40ca9d13ad59d9fdd7.mp4%3Fsign%3D95b16502d2e2c34be37d3e32f4ea6f2a%26t%3D1776756804&filename=Aazhi+%5BCAM%5D.mp4 HTTP/1.1" 502 -
+127.0.0.1 - - [21/Apr/2026 09:37:47] "GET /api/media?url=https%3A%2F%2Fbcdn.hakunaymatata.com%2Fresource%2Fh265%2F86927c134b6aea40ca9d13ad59d9fdd7.mp4%3Fsign%3D95b16502d2e2c34be37d3e32f4ea6f2a%26t%3D1776756804&filename=Aazhi+%5BCAM%5D.mp4 HTTP/1.1" 500 -
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 65152)
+Traceback (most recent call last):
+  File "C:\Users\HP\Downloads\flixora\server.py", line 1535, in proxy_media
+    self.wfile.write(chunk)
+    ~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Python313\Lib\socketserver.py", line 845, in write
+    self._sock.sendall(b)
+    ~~~~~~~~~~~~~~~~~~^^^
+ConnectionResetError: [WinError 10054] An existing connection was forcibly closed by the remote host
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\HP\Downloads\flixora\server.py", line 1460, in handle_api
+    self.proxy_media(
+    ~~~~~~~~~~~~~~~~^
+        target_url=target_url,
+        ^^^^^^^^^^^^^^^^^^^^^^
+        as_attachment=params.get("download", ["0"])[0] == "1",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        filename=params.get("filename", ["media.mp4"])[0].strip() or "media.mp4",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\HP\Downloads\flixora\server.py", line 1537, in proxy_media
+    self.send_error(HTTPStatus.BAD_GATEWAY, "Unable to proxy media from upstream source")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\http\server.py", line 499, in send_error
+    self.end_headers()
+    ~~~~~~~~~~~~~~~~^^
+  File "C:\Users\HP\Downloads\flixora\server.py", line 1402, in end_headers
+    super().end_headers()
+    ~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Python313\Lib\http\server.py", line 549, in end_headers
+    self.flush_headers()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "C:\Python313\Lib\http\server.py", line 553, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\socketserver.py", line 845, in write
+    self._sock.sendall(b)
+    ~~~~~~~~~~~~~~~~~~^^^
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Python313\Lib\socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\HP\Downloads\flixora\server.py", line 1370, in __init__
+    super().__init__(*args, directory=str(ROOT_DIR), **kwargs)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\http\server.py", line 683, in __init__
+    super().__init__(*args, **kwargs)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\socketserver.py", line 766, in __init__
+    self.handle()
+    ~~~~~~~~~~~^^
+  File "C:\Python313\Lib\http\server.py", line 447, in handle
+    self.handle_one_request()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Python313\Lib\http\server.py", line 435, in handle_one_request
+    method()
+    ~~~~~~^^
+  File "C:\Users\HP\Downloads\flixora\server.py", line 1411, in do_GET
+    self.handle_api(parsed)
+    ~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\HP\Downloads\flixora\server.py", line 1487, in handle_api
+    self.respond_json(
+    ~~~~~~~~~~~~~~~~~^
+        {"error": str(exc), "path": parsed.path},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\HP\Downloads\flixora\server.py", line 1618, in respond_json
+    self.end_headers()
+    ~~~~~~~~~~~~~~~~^^
+  File "C:\Users\HP\Downloads\flixora\server.py", line 1402, in end_headers
+    super().end_headers()
+    ~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Python313\Lib\http\server.py", line 549, in end_headers
+    self.flush_headers()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "C:\Python313\Lib\http\server.py", line 553, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\socketserver.py", line 845, in write
+    self._sock.sendall(b)
+    ~~~~~~~~~~~~~~~~~~^^^
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+127.0.0.1 - - [21/Apr/2026 09:37:47] "GET /styles.css?v=20260421a HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:37:47] "GET /config.js?v=20260421b HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:37:47] "GET /logo.svg HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:37:47] "GET /script.js?v=20260421b HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:37:47] "GET /api/home HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:41:08] "GET /movie.html?id=4830273202448466064 HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:41:08] "GET /styles.css?v=20260421a HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:41:08] "GET /logo.svg HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:41:08] "GET /config.js?v=20260421b HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:41:08] "GET /script.js?v=20260421b HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:41:08] "GET /api/home HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:41:11] "GET /api/movie?id=4830273202448466064 HTTP/1.1" 200 -
+127.0.0.1 - - [21/Apr/2026 09:41:11] "POST /api/movie-view?id=4830273202448466064 HTTP/1.1" 200 -

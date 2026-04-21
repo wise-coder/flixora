@@ -5,6 +5,9 @@ let detailPayload = null;
 let heroIntervalId = null;
 let activeSearchToken = 0;
 const PAGE_MOVIE_LIMIT = 100;
+const FLIXORA_CONFIG = window.FLIXORA_CONFIG || {};
+const API_BASE = resolveApiBase();
+const VIEW_TRACK_TTL_MS = 12 * 60 * 60 * 1000;
 
 const categoryDescriptions = {
   Trending: "Fresh picks pulled from the latest Moviebox homepage feed.",
@@ -19,6 +22,46 @@ const sitePages = [
   { page: "privacy", href: "privacy.html", label: "Privacy Policy" },
   { page: "terms", href: "terms.html", label: "Terms & Conditions" },
 ];
+
+function normalizeBaseUrl(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function isAbsoluteUrl(value) {
+  return /^https?:\/\//i.test(String(value || ""));
+}
+
+function resolveApiBase() {
+  const configuredBase = normalizeBaseUrl(FLIXORA_CONFIG.apiBase);
+  const hostname = window.location.hostname;
+  const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1";
+
+  if (isLocalHost && !FLIXORA_CONFIG.preferConfiguredApiInLocalDev) {
+    return window.location.origin;
+  }
+
+  return configuredBase || window.location.origin;
+}
+
+function toApiUrl(path) {
+  if (!path) {
+    return API_BASE;
+  }
+
+  if (isAbsoluteUrl(path)) {
+    return path;
+  }
+
+  return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function normalizeBackendAssetUrl(url) {
+  if (!url || isAbsoluteUrl(url) || !String(url).startsWith("/api/")) {
+    return url;
+  }
+
+  return toApiUrl(url);
+}
 
 function debounce(fn, delay) {
   let timeoutId;
@@ -38,11 +81,143 @@ function escapeHtml(value) {
 }
 
 async function fetchJson(path) {
-  const response = await fetch(path, { headers: { Accept: "application/json" } });
+  const requestUrl = toApiUrl(path);
+  const response = await fetch(requestUrl, { headers: { Accept: "application/json" } });
   if (!response.ok) {
-    throw new Error(`Request failed for ${path} with status ${response.status}`);
+    throw new Error(`Request failed for ${requestUrl} with status ${response.status}`);
   }
   return response.json();
+}
+
+function formatViewCount(count) {
+  const numericCount = Math.max(0, Number(count) || 0);
+  const compact = new Intl.NumberFormat("en", {
+    notation: numericCount >= 1000 ? "compact" : "standard",
+    maximumFractionDigits: numericCount >= 1000 ? 1 : 0,
+  }).format(numericCount);
+  return `${compact} view${numericCount === 1 ? "" : "s"}`;
+}
+
+function buildMovieMetaText(movie, { includeRating = false, includeType = true } = {}) {
+  const parts = [
+    movie?.category || "Trending",
+    movie?.year || "Unknown",
+  ];
+
+  if (includeRating) {
+    parts.push(`Rating ${movie?.rating || "N/A"}`);
+  }
+
+  if (includeType) {
+    parts.push(movie?.mediaType === "series" ? "Series" : "Movie");
+  }
+
+  parts.push(formatViewCount(movie?.viewCount));
+  return parts.join(" | ");
+}
+
+function updateDetailMetaText(movie) {
+  const rating = document.getElementById("movieRating");
+  if (!rating || !movie) {
+    return;
+  }
+
+  rating.textContent = buildMovieMetaText(movie, { includeRating: true, includeType: true });
+}
+
+function getMovieViewStorageKey(movieId) {
+  return `flixoraMovieView:${movieId}`;
+}
+
+function shouldTrackMovieView(movieId) {
+  if (!movieId) {
+    return false;
+  }
+
+  try {
+    const lastTrackedAt = Number(localStorage.getItem(getMovieViewStorageKey(movieId)) || "0");
+    return !lastTrackedAt || (Date.now() - lastTrackedAt) > VIEW_TRACK_TTL_MS;
+  } catch {
+    return true;
+  }
+}
+
+function markMovieViewTracked(movieId) {
+  if (!movieId) {
+    return;
+  }
+
+  try {
+    localStorage.setItem(getMovieViewStorageKey(movieId), String(Date.now()));
+  } catch {
+    // Ignore storage failures and keep the page usable.
+  }
+}
+
+function updateMovieViewInList(items, movieId, viewCount) {
+  if (!Array.isArray(items)) {
+    return;
+  }
+
+  items.forEach((item) => {
+    if (item?.id === movieId) {
+      item.viewCount = viewCount;
+    }
+  });
+}
+
+function syncMovieViewCaches(movieId, viewCount) {
+  if (!movieId) {
+    return;
+  }
+
+  if (homePayload) {
+    updateMovieViewInList(homePayload.hero, movieId, viewCount);
+    updateMovieViewInList(homePayload.catalog, movieId, viewCount);
+    (homePayload.sections || []).forEach((section) => updateMovieViewInList(section?.movies, movieId, viewCount));
+  }
+
+  if (categoryPayload) {
+    updateMovieViewInList(categoryPayload.items, movieId, viewCount);
+    updateMovieViewInList(categoryPayload.movies, movieId, viewCount);
+    updateMovieViewInList(categoryPayload.keepBrowsing, movieId, viewCount);
+    if (categoryPayload.featured?.id === movieId) {
+      categoryPayload.featured.viewCount = viewCount;
+    }
+  }
+
+  if (detailPayload?.movie?.id === movieId) {
+    detailPayload.movie.viewCount = viewCount;
+  }
+
+  if (detailPayload) {
+    updateMovieViewInList(detailPayload.related, movieId, viewCount);
+    updateMovieViewInList(detailPayload.trending, movieId, viewCount);
+  }
+}
+
+async function registerMovieView(movieId) {
+  if (!movieId || !shouldTrackMovieView(movieId)) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(toApiUrl(`/api/movie-view?id=${encodeURIComponent(movieId)}`), {
+      method: "POST",
+    });
+    if (!response.ok) {
+      throw new Error(`View tracking failed with status ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const viewCount = Number(payload?.viewCount) || 0;
+    markMovieViewTracked(movieId);
+    syncMovieViewCaches(movieId, viewCount);
+    return viewCount;
+  } catch (error) {
+    console.error("Unable to register movie view", error);
+    return null;
+  }
 }
 
 async function getHomeData(force = false) {
@@ -179,7 +354,7 @@ function buildMediaProxyUrl(url, filename = "", download = false) {
   if (filename) {
     params.set("filename", filename);
   }
-  return `/api/media?${params.toString()}`;
+  return toApiUrl(`/api/media?${params.toString()}`);
 }
 
 function buildSubtitleProxyUrl(url, label = "", language = "") {
@@ -194,7 +369,7 @@ function buildSubtitleProxyUrl(url, label = "", language = "") {
   if (language) {
     params.set("lang", language);
   }
-  return `/api/subtitle?${params.toString()}`;
+  return toApiUrl(`/api/subtitle?${params.toString()}`);
 }
 
 function buildPlaybackChoices(movie) {
@@ -233,7 +408,7 @@ function buildPlaybackChoices(movie) {
         sourceUrl: quality.sourceUrl || option.resourceLink || playUrl,
         direct: streamType !== "dash" && isDirectMediaUrl(playUrl),
         streamType,
-        manifestUrl,
+        manifestUrl: normalizeBackendAssetUrl(manifestUrl),
       });
     });
   });
@@ -375,7 +550,7 @@ function renderCards(container, data = [], count = PAGE_MOVIE_LIMIT) {
           <div class="play-btn" role="button" tabindex="0" aria-label="Open details for ${escapeHtml(movie.title)}">&#9654;</div>
         </div>
         <h3>${escapeHtml(movie.title)}</h3>
-        <p class="movie-meta">${escapeHtml(movie.category || "Trending")} | ${escapeHtml(movie.year || "Unknown")} | ${movie.mediaType === "series" ? "Series" : "Movie"}</p>
+        <p class="movie-meta">${escapeHtml(buildMovieMetaText(movie))}</p>
       </a>
       <button class="heart favorite-button ${favorites.includes(movieId) ? "active" : ""}" type="button" aria-label="Toggle favorite">&#10084;</button>
     `;
@@ -640,7 +815,7 @@ function renderHomeHero(heroMovies = []) {
     const movie = heroMovies[currentIndex];
     hero.style.backgroundImage = `url(${movie.backdrop || movie.poster})`;
     heroTitle.textContent = movie.title;
-    heroMeta.textContent = `${movie.category || "Trending"} | ${movie.year || "Unknown"} | Rating ${movie.rating || "N/A"}`;
+    heroMeta.textContent = buildMovieMetaText(movie, { includeRating: true, includeType: false });
     heroDesc.textContent = movie.desc || "No description available yet.";
     heroPlayButton.onclick = () => goToMoviePage(movie.id);
     renderDots();
@@ -729,7 +904,7 @@ function renderCategoryPageData(payload) {
   }
 
   if (sectionTitle) {
-    sectionTitle.textContent = `${requestedCategory} Movies`;
+    sectionTitle.textContent = `${requestedCategory} Titles`;
   }
 
   if (count) {
@@ -918,7 +1093,7 @@ function renderMovieDetailPayload(payload, homeData) {
   }
 
   if (rating) {
-    rating.textContent = `${movie.category || "Trending"} | ${movie.year || "Unknown"} | Rating ${movie.rating || "N/A"} | ${movie.mediaType === "series" ? "Series" : "Movie"}`;
+    rating.textContent = buildMovieMetaText(movie, { includeRating: true, includeType: true });
   }
 
   function updatePlaybackMeta(choice) {
@@ -1144,7 +1319,7 @@ function renderMovieDetailPayload(payload, homeData) {
       const proxiedUrl = buildMediaProxyUrl(currentPlayback.playUrl, `${movie.title}.mp4`);
       moviePlayer.hidden = false;
       moviePlayer.dataset.playbackActive = "1";
-      if (moviePlayer.src !== window.location.origin + proxiedUrl) {
+      if (moviePlayer.src !== proxiedUrl) {
         moviePlayer.src = proxiedUrl;
       }
       moviePlayer.play().catch(() => {
@@ -1623,6 +1798,11 @@ async function loadMovieDetail() {
   const movieId = getMovieIdFromUrl() || homePayload?.hero?.[0]?.id || homePayload?.catalog?.[0]?.id;
   detailPayload = await fetchJson(`/api/movie?id=${encodeURIComponent(movieId)}`);
   renderMovieDetailPayload(detailPayload, homePayload);
+  const trackedViewCount = await registerMovieView(movieId);
+  if (trackedViewCount !== null && detailPayload?.movie) {
+    detailPayload.movie.viewCount = trackedViewCount;
+    updateDetailMetaText(detailPayload.movie);
+  }
 }
 
 document.addEventListener("DOMContentLoaded", async () => {

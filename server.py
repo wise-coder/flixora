@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 import threading
 import time
@@ -27,9 +28,11 @@ from moviebox_api.v3.urls import PLAY_INFO_PATH
 
 
 ROOT_DIR = Path(__file__).resolve().parent
+VIEWS_FILE = ROOT_DIR / "movie-views.json"
 HOME_CACHE_TTL_SECONDS = 15 * 60
 DETAIL_CACHE_TTL_SECONDS = 15 * 60
 SEARCH_CACHE_TTL_SECONDS = 5 * 60
+CATEGORY_CACHE_TTL_SECONDS = 5 * 60
 STREAM_PROXY_TTL_SECONDS = 30 * 60
 PLAYABLE_CACHE_TTL_SECONDS = DETAIL_CACHE_TTL_SECONDS
 DEFAULT_HOST = "127.0.0.1"
@@ -39,6 +42,10 @@ SEARCH_PAGE_SIZE = 20
 HOME_PAGE_FETCH_LIMIT = 5
 PLAYABLE_BATCH_SIZE = 8
 DIRECT_SOURCE_PREFIX = "moviebox direct"
+SPECIAL_SERIES_CATEGORY_QUERIES = {
+    "Korean Drama": ["korean drama", "kdrama"],
+    "China Drama": ["china drama", "chinese drama", "cdrama"],
+}
 
 CATEGORY_BLURBS = {
     "Trending": "Fresh picks pulled from the latest Moviebox homepage feed.",
@@ -55,13 +62,37 @@ DIRECT_MEDIA_PATTERN = re.compile(
 DASH_BASE_URL_PATTERN = re.compile(r"<BaseURL>.*?</BaseURL>", re.IGNORECASE | re.DOTALL)
 PERIOD_TAG_PATTERN = re.compile(r"(<Period\b[^>]*>)", re.IGNORECASE)
 
+
+def load_view_counts() -> dict[str, int]:
+    try:
+        payload = json.loads(VIEWS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+
+    if not isinstance(payload, dict):
+        return {}
+
+    counts: dict[str, int] = {}
+    for key, value in payload.items():
+        subject_id = str(key).strip()
+        if not subject_id:
+            continue
+        try:
+            counts[subject_id] = max(int(value), 0)
+        except (TypeError, ValueError):
+            continue
+    return counts
+
+
 _cache_lock = threading.Lock()
 _cache: dict[str, Any] = {
     "home": {"timestamp": 0.0, "value": None},
     "detail": {},
     "playable": {},
     "search": {},
+    "category": {},
     "stream_tokens": {},
+    "views": load_view_counts(),
 }
 
 
@@ -115,6 +146,36 @@ def to_float(value: Any) -> float:
         return 0.0
 
 
+def persist_view_counts() -> None:
+    try:
+        VIEWS_FILE.write_text(
+            json.dumps(_cache["views"], ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def get_view_count(subject_id: Any) -> int:
+    normalized_id = str(subject_id or "").strip()
+    if not normalized_id:
+        return 0
+    with _cache_lock:
+        return int(_cache["views"].get(normalized_id, 0))
+
+
+def increment_view_count(subject_id: Any) -> int:
+    normalized_id = str(subject_id or "").strip()
+    if not normalized_id:
+        return 0
+
+    with _cache_lock:
+        current_count = int(_cache["views"].get(normalized_id, 0)) + 1
+        _cache["views"][normalized_id] = current_count
+        persist_view_counts()
+    return current_count
+
+
 def first_url(*values: Any) -> str:
     for value in values:
         if isinstance(value, str) and value.strip():
@@ -164,7 +225,7 @@ def normalize_subject(subject: dict[str, Any]) -> dict[str, Any]:
         subject.get("detailUrl"),
     )
 
-    return {
+    normalized = {
         "id": str(
             subject.get("subjectId")
             or subject.get("subject_id")
@@ -190,7 +251,49 @@ def normalize_subject(subject: dict[str, Any]) -> dict[str, Any]:
         "resourceOptions": [],
         "subtitleOptions": [],
         "seriesItems": [],
+        "viewCount": 0,
     }
+    normalized["category"] = primary_category(normalized)
+    return normalized
+
+
+def infer_series_category(movie: dict[str, Any]) -> str | None:
+    if movie.get("mediaType") != "series":
+        return None
+
+    country = str(movie.get("country") or "").strip().lower()
+    if "korea" in country:
+        return "Korean Drama"
+    if "china" in country:
+        return "China Drama"
+    return None
+
+
+def movie_category_tags(movie: dict[str, Any]) -> list[str]:
+    tags: list[str] = []
+
+    special_category = infer_series_category(movie)
+    if special_category:
+        tags.append(special_category)
+
+    for genre in movie.get("genres", []):
+        genre_name = str(genre or "").strip()
+        if genre_name and genre_name not in tags:
+            tags.append(genre_name)
+
+    return tags
+
+
+def primary_category(movie: dict[str, Any]) -> str:
+    tags = movie_category_tags(movie)
+    return tags[0] if tags else "Trending"
+
+
+def movie_matches_category(movie: dict[str, Any], category_name: str) -> bool:
+    target = str(category_name or "").strip().lower()
+    if not target:
+        return False
+    return any(tag.lower() == target for tag in movie_category_tags(movie))
 
 
 def dedupe_movies(movies: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -205,13 +308,75 @@ def dedupe_movies(movies: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return unique
 
 
+def dedupe_catalog_variants(movies: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+
+    for movie in movies:
+        title_key = make_match_key(movie.get("title"))
+        if not title_key:
+            continue
+
+        dedupe_key = "::".join(
+            [
+                str(movie.get("mediaType") or ""),
+                title_key,
+                str(movie.get("year") or ""),
+            ]
+        )
+        if dedupe_key in seen:
+            continue
+
+        seen.add(dedupe_key)
+        unique.append(movie)
+
+    return unique
+
+
+def apply_view_count_to_movie(movie: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(movie, dict):
+        return movie
+    movie["viewCount"] = get_view_count(movie.get("id"))
+    return movie
+
+
+def apply_view_counts_to_movies(movies: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    if not isinstance(movies, list):
+        return movies or []
+    for movie in movies:
+        apply_view_count_to_movie(movie)
+    return movies
+
+
+def apply_view_counts_to_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return payload
+
+    for key in ("hero", "catalog", "items", "movies", "keepBrowsing", "related", "trending"):
+        if key in payload:
+            payload[key] = apply_view_counts_to_movies(payload.get(key))
+
+    if "featured" in payload:
+        payload["featured"] = apply_view_count_to_movie(payload.get("featured"))
+
+    if "movie" in payload:
+        payload["movie"] = apply_view_count_to_movie(payload.get("movie"))
+
+    if isinstance(payload.get("sections"), list):
+        for section in payload["sections"]:
+            if isinstance(section, dict):
+                section["movies"] = apply_view_counts_to_movies(section.get("movies"))
+
+    return payload
+
+
 def derive_categories(catalog: list[dict[str, Any]]) -> list[str]:
     counts: Counter[str] = Counter()
     for movie in catalog:
-        for genre in movie.get("genres", []):
-            counts[genre] += 1
+        for tag in movie_category_tags(movie):
+            counts[tag] += 1
 
-    preferred = ["Action", "Comedy", "Drama"]
+    preferred = ["Action", "Comedy", "Drama", "Korean Drama", "China Drama"]
     categories = [genre for genre in preferred if counts.get(genre)]
     for genre, _ in counts.most_common():
         if genre not in categories:
@@ -242,7 +407,7 @@ def build_genre_sections(catalog: list[dict[str, Any]], categories: list[str]) -
                 "slug": genre.lower().replace(" ", "-"),
                 "title": genre,
                 "description": "",
-                "movies": [movie for movie in catalog if genre in movie.get("genres", [])][:PAGE_MOVIE_LIMIT],
+                "movies": [movie for movie in catalog if movie_matches_category(movie, genre)][:PAGE_MOVIE_LIMIT],
             }
         )
 
@@ -344,7 +509,7 @@ def resolve_home(force_refresh: bool = False) -> dict[str, Any]:
         should_refresh = force_refresh or cached is None or stale(entry, HOME_CACHE_TTL_SECONDS)
 
     if not should_refresh:
-        return deepcopy(cached)
+        return apply_view_counts_to_payload(deepcopy(cached))
 
     try:
         fresh = asyncio.run(fetch_home_payload())
@@ -352,12 +517,12 @@ def resolve_home(force_refresh: bool = False) -> dict[str, Any]:
         with _cache_lock:
             cached = _cache["home"].get("value")
         if cached is not None:
-            return deepcopy(cached)
+            return apply_view_counts_to_payload(deepcopy(cached))
         raise
 
     with _cache_lock:
         _cache["home"] = {"timestamp": time.time(), "value": fresh}
-    return deepcopy(fresh)
+    return apply_view_counts_to_payload(deepcopy(fresh))
 
 
 def build_resource_options(detail: dict[str, Any]) -> list[dict[str, Any]]:
@@ -724,8 +889,21 @@ async def fetch_direct_playable_movie(
     except Exception:
         return store_cached_playable_movie(subject_id, None)
 
-    if is_series(detail.get("subjectType")):
-        return store_cached_playable_movie(subject_id, None)
+    movie = normalize_subject(detail)
+
+    if movie.get("mediaType") == "series":
+        series_items = await fetch_series_items(client_session, detail, movie)
+        if not series_items:
+            return store_cached_playable_movie(subject_id, None)
+
+        movie["seriesItems"] = series_items
+        movie["downloadUrl"] = first_url(
+            series_items[0].get("downloadUrl"),
+            movie.get("downloadUrl"),
+        )
+        movie["detailUrl"] = first_url(movie.get("detailUrl"), detail.get("detailUrl"))
+        movie["category"] = primary_category(movie)
+        return store_cached_playable_movie(subject_id, movie)
 
     resource_options = filter_direct_moviebox_options(
         await fetch_movie_playback_options(client_session, detail)
@@ -733,7 +911,6 @@ async def fetch_direct_playable_movie(
     if not resource_options:
         return store_cached_playable_movie(subject_id, None)
 
-    movie = normalize_subject(detail)
     movie["resourceOptions"] = resource_options
 
     best_quality = resource_options[0]["qualities"][0]
@@ -766,8 +943,6 @@ async def filter_subjects_to_direct_movies(
             or ""
         ).strip()
         if not subject_id or subject_id in seen_ids:
-            continue
-        if is_series(subject.get("subjectType") or subject.get("subject_type")):
             continue
 
         seen_ids.add(subject_id)
@@ -1031,7 +1206,7 @@ def resolve_detail(subject_id: str) -> dict[str, Any]:
     with _cache_lock:
         entry = _cache["detail"].get(subject_id)
         if entry and not stale(entry, DETAIL_CACHE_TTL_SECONDS):
-            return deepcopy(entry["value"])
+            return apply_view_counts_to_payload(deepcopy(entry["value"]))
 
     home = resolve_home()
     payload = asyncio.run(fetch_detail_payload(subject_id, home))
@@ -1039,7 +1214,7 @@ def resolve_detail(subject_id: str) -> dict[str, Any]:
     with _cache_lock:
         _cache["detail"][subject_id] = {"timestamp": time.time(), "value": payload}
 
-    return deepcopy(payload)
+    return apply_view_counts_to_payload(deepcopy(payload))
 
 
 def proxy_request_headers(cookie_header: str = "") -> dict[str, str]:
@@ -1086,38 +1261,98 @@ async def fetch_search_payload(query: str) -> dict[str, Any]:
     }
 
 
+async def fetch_special_series_category_titles(category_name: str) -> list[dict[str, Any]]:
+    queries = SPECIAL_SERIES_CATEGORY_QUERIES.get(category_name, [])
+    if not queries:
+        return []
+
+    async with MovieBoxHttpClient(timeout=30) as client_session:
+        candidates: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        for query in queries:
+            search = Search(
+                client_session,
+                query,
+                subject_type=SubjectType.TV_SERIES,
+                per_page=SEARCH_PAGE_SIZE,
+            )
+
+            async for content in search.get_content_model_all():
+                for item in content.items:
+                    payload = item.model_dump()
+                    subject_id = str(
+                        payload.get("subjectId")
+                        or payload.get("subject_id")
+                        or payload.get("id")
+                        or ""
+                    ).strip()
+                    if not subject_id or subject_id in seen_ids:
+                        continue
+                    seen_ids.add(subject_id)
+                    candidates.append(payload)
+
+                if len(candidates) >= PAGE_MOVIE_LIMIT * 3:
+                    break
+
+            if len(candidates) >= PAGE_MOVIE_LIMIT * 3:
+                break
+
+        direct_titles = await filter_subjects_to_direct_movies(
+            client_session,
+            candidates,
+            limit=PAGE_MOVIE_LIMIT * 2,
+        )
+        matched_titles = [
+            movie
+            for movie in direct_titles
+            if movie_matches_category(movie, category_name)
+        ]
+        matched_titles = dedupe_catalog_variants(matched_titles)
+        matched_titles.sort(key=lambda movie: movie.get("rating", 0), reverse=True)
+        return matched_titles[:PAGE_MOVIE_LIMIT]
+
+
 def resolve_search(query: str) -> dict[str, Any]:
     key = query.strip().lower()
     with _cache_lock:
         entry = _cache["search"].get(key)
         if entry and not stale(entry, SEARCH_CACHE_TTL_SECONDS):
-            return deepcopy(entry["value"])
+            return apply_view_counts_to_payload(deepcopy(entry["value"]))
 
     payload = asyncio.run(fetch_search_payload(query))
     with _cache_lock:
         _cache["search"][key] = {"timestamp": time.time(), "value": payload}
-    return deepcopy(payload)
+    return apply_view_counts_to_payload(deepcopy(payload))
 
 
 def resolve_category(category: str) -> dict[str, Any]:
+    category_name = (category or "Trending").strip() or "Trending"
+    cache_key = category_name.lower()
+    with _cache_lock:
+        entry = _cache["category"].get(cache_key)
+        if entry and not stale(entry, CATEGORY_CACHE_TTL_SECONDS):
+            return apply_view_counts_to_payload(deepcopy(entry["value"]))
+
     home = resolve_home()
     catalog = home.get("catalog", [])
-    category_name = (category or "Trending").strip() or "Trending"
 
     if category_name.lower() == "trending":
         movies = sorted(catalog, key=lambda movie: movie.get("rating", 0), reverse=True)
+    elif category_name in SPECIAL_SERIES_CATEGORY_QUERIES:
+        movies = asyncio.run(fetch_special_series_category_titles(category_name))
     else:
         movies = [
             movie
             for movie in catalog
-            if any(genre.lower() == category_name.lower() for genre in movie.get("genres", []))
+            if movie_matches_category(movie, category_name)
         ]
         movies = sorted(movies, key=lambda movie: movie.get("rating", 0), reverse=True)
 
     featured = movies[0] if movies else (catalog[0] if catalog else {})
     keep_browsing = [movie for movie in catalog if movie.get("id") != featured.get("id")]
 
-    return {
+    payload = {
         "requestedCategory": category_name,
         "description": "",
         "featured": featured,
@@ -1125,17 +1360,50 @@ def resolve_category(category: str) -> dict[str, Any]:
         "keepBrowsing": keep_browsing[:PAGE_MOVIE_LIMIT],
         "categories": home.get("categories", []),
     }
+    with _cache_lock:
+        _cache["category"][cache_key] = {"timestamp": time.time(), "value": payload}
+    return apply_view_counts_to_payload(deepcopy(payload))
 
 
 class FlixoraHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT_DIR), **kwargs)
 
+    def cors_origin(self) -> str:
+        allowed_origins = os.getenv("FLIXORA_ALLOWED_ORIGINS", "*").strip()
+        request_origin = self.headers.get("Origin", "").strip()
+
+        if allowed_origins == "*":
+            return "*"
+
+        if not request_origin:
+            return ""
+
+        allowed = set(split_csv(allowed_origins))
+        if request_origin in allowed:
+            return request_origin
+        return ""
+
     def end_headers(self) -> None:
+        cors_origin = self.cors_origin()
+        if cors_origin:
+            self.send_header("Access-Control-Allow-Origin", cors_origin)
+            if cors_origin != "*":
+                self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Accept, Content-Type, Range")
+        self.send_header(
+            "Access-Control-Expose-Headers",
+            "Accept-Ranges, Content-Disposition, Content-Length, Content-Range, ETag, Last-Modified",
+        )
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
         super().end_headers()
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.end_headers()
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -1143,6 +1411,18 @@ class FlixoraHandler(SimpleHTTPRequestHandler):
             self.handle_api(parsed)
             return
         super().do_GET()
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/movie-view":
+            params = parse_qs(parsed.query)
+            movie_id = params.get("id", [""])[0].strip()
+            if not movie_id:
+                self.send_error(HTTPStatus.BAD_REQUEST, "Missing movie id")
+                return
+            self.respond_json({"id": movie_id, "viewCount": increment_view_count(movie_id)})
+            return
+        self.send_error(HTTPStatus.NOT_FOUND, "Unknown API endpoint")
 
     def handle_api(self, parsed) -> None:
         params = parse_qs(parsed.query)

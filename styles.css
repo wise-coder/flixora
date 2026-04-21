@@ -97,6 +97,7 @@ input {
   flex-direction: column;
   gap: 1.3rem;
   min-width: 0;
+  overflow: hidden;
 }
 
 .sidebar-brand {
@@ -170,6 +171,30 @@ input {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.35rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(229, 9, 20, 0.75) rgba(255, 255, 255, 0.06);
+}
+
+.sidebar-nav::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar-nav::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb {
+  background: rgba(229, 9, 20, 0.75);
+  border-radius: 999px;
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb:hover {
+  background: rgba(229, 9, 20, 0.95);
 }
 
 .sidebar-group-label {
@@ -1187,16 +1212,57 @@ input {
 
 .resource-actions {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
   gap: 0.75rem;
 }
 
 .resource-icon {
   min-height: 62px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02));
   color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0.75rem 0.85rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-align: center;
+  line-height: 1.1;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 14px 24px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(10px);
+  transition:
+    transform 0.2s ease,
+    background 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+  cursor: pointer;
+}
+
+.resource-icon:hover {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.065), rgba(255, 255, 255, 0.028));
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 18px 28px rgba(0, 0, 0, 0.22);
+  transform: translateY(-2px);
+}
+
+.resource-icon:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.28);
+  outline-offset: 3px;
+}
+
+.resource-icon:active {
+  transform: translateY(0);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 10px 18px rgba(0, 0, 0, 0.18);
 }
 
 .resource-copy h1 {
@@ -1420,6 +1486,16 @@ input {
     grid-template-columns: 1fr;
   }
 
+  .resource-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .resource-icon {
+    min-height: 58px;
+    border-radius: 16px;
+    font-size: 0.88rem;
+  }
+
   .player-stage {
     min-height: 340px;
   }
@@ -1493,6 +1569,16 @@ input {
 
   .movie-card img {
     height: 230px;
+  }
+
+  .resource-actions {
+    gap: 0.7rem;
+  }
+
+  .resource-icon {
+    min-height: 54px;
+    font-size: 0.82rem;
+    padding: 0.7rem 0.65rem;
   }
 
   .info-hero,
