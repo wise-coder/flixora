@@ -13,6 +13,13 @@ const categoryDescriptions = {
   Drama: "Character-heavy titles with tension, emotion, and depth.",
 };
 
+const sitePages = [
+  { page: "about", href: "about.html", label: "About Us" },
+  { page: "contact", href: "contact.html", label: "Contact Us" },
+  { page: "privacy", href: "privacy.html", label: "Privacy Policy" },
+  { page: "terms", href: "terms.html", label: "Terms & Conditions" },
+];
+
 function debounce(fn, delay) {
   let timeoutId;
   return (...args) => {
@@ -59,6 +66,10 @@ function getUrlCategory() {
 function getMovieIdFromUrl() {
   const urlParams = new URLSearchParams(window.location.search);
   return urlParams.get("id");
+}
+
+function getCurrentPageId() {
+  return document.body?.dataset.page || "";
 }
 
 function buildCategoryHref(categoryName) {
@@ -251,33 +262,58 @@ function getCategories() {
   return homePayload?.categories || [];
 }
 
+function createSidebarLink({ href, label, active = false }) {
+  const link = document.createElement("a");
+  link.className = `sidebar-link ${active ? "active" : ""}`;
+  link.href = href;
+  link.textContent = label;
+  return link;
+}
+
+function createSidebarGroupLabel(label) {
+  const groupLabel = document.createElement("p");
+  groupLabel.className = "sidebar-group-label";
+  groupLabel.textContent = label;
+  return groupLabel;
+}
+
 function renderSidebarNav(categories = []) {
   const nav = document.querySelector("[data-sidebar-nav]");
   if (!nav) {
     return;
   }
 
-  const page = document.body.dataset.page;
+  const page = getCurrentPageId();
   const activeCategory = isSearchResultsPage() ? "" : getUrlCategory();
   const visibleCategories = ["Trending", ...categories.filter((category) => category !== "Trending")];
   nav.innerHTML = "";
 
-  const homeLink = document.createElement("a");
-  homeLink.className = `sidebar-link ${page === "home" ? "active" : ""}`;
-  homeLink.href = "index.html";
-  homeLink.textContent = "Home";
-  nav.appendChild(homeLink);
+  nav.appendChild(createSidebarLink({
+    href: "index.html",
+    label: "Home",
+    active: page === "home",
+  }));
 
   visibleCategories.forEach((categoryName) => {
-    const link = document.createElement("a");
     const isActiveCategory =
       page === "category" &&
       activeCategory &&
       activeCategory.toLowerCase() === categoryName.toLowerCase();
-    link.className = `sidebar-link ${isActiveCategory ? "active" : ""}`;
-    link.href = buildCategoryHref(categoryName);
-    link.textContent = categoryName;
-    nav.appendChild(link);
+    nav.appendChild(createSidebarLink({
+      href: buildCategoryHref(categoryName),
+      label: categoryName,
+      active: isActiveCategory,
+    }));
+  });
+
+  nav.appendChild(createSidebarGroupLabel("About & Support"));
+
+  sitePages.forEach((item) => {
+    nav.appendChild(createSidebarLink({
+      href: item.href,
+      label: item.label,
+      active: page === item.page,
+    }));
   });
 }
 
@@ -1510,6 +1546,55 @@ function initSearch() {
   });
 }
 
+function initContactForm() {
+  const contactForm = document.querySelector("[data-contact-form]");
+  if (!contactForm) {
+    return;
+  }
+
+  const status = document.querySelector("[data-contact-status]");
+  const emailTarget = document.querySelector("[data-contact-email]");
+  const copyButton = document.querySelector("[data-copy-email]");
+
+  function setStatus(message) {
+    if (status) {
+      status.textContent = message;
+    }
+  }
+
+  contactForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+
+    const formData = new FormData(contactForm);
+    const name = String(formData.get("name") || "").trim();
+    const email = String(formData.get("email") || "").trim();
+    const subject = String(formData.get("subject") || "").trim() || "Flixora inquiry";
+    const message = String(formData.get("message") || "").trim();
+
+    const bodyLines = [
+      name ? `Name: ${name}` : "",
+      email ? `Email: ${email}` : "",
+      "",
+      message || "Hello Serge,",
+    ].filter(Boolean);
+
+    const mailtoUrl = `mailto:serge.wiseabijuru5@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyLines.join("\n"))}`;
+    window.location.href = mailtoUrl;
+    setStatus("Your email app should open with a drafted message.");
+  });
+
+  copyButton?.addEventListener("click", async () => {
+    const email = emailTarget?.textContent?.trim() || "serge.wiseabijuru5@gmail.com";
+    try {
+      await navigator.clipboard.writeText(email);
+      setStatus("Email address copied to your clipboard.");
+    } catch (error) {
+      console.error("Unable to copy email address", error);
+      setStatus("Copy failed. Please use the email address shown above.");
+    }
+  });
+}
+
 async function loadHomePage() {
   const homeData = await getHomeData();
   renderHomeHero(homeData.hero || []);
@@ -1541,14 +1626,21 @@ async function loadMovieDetail() {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+  initAnimations();
+  initSearch();
+  initContactForm();
+
   try {
     homePayload = await getHomeData();
-    renderSidebarNav(homePayload.categories || []);
     updateFeaturedLinks(homePayload);
-    initAnimations();
-    initSearch();
+  } catch (error) {
+    console.error("Failed to load shared navigation data", error);
+  }
 
-    if (document.querySelector(".page-home")) {
+  renderSidebarNav(homePayload?.categories || []);
+
+  try {
+    if (document.querySelector(".page-home") && homePayload) {
       await loadHomePage();
     }
 
@@ -1556,7 +1648,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       await loadCategoryPage();
     }
 
-    if (document.querySelector(".page-detail")) {
+    if (document.querySelector(".page-detail") && homePayload) {
       await loadMovieDetail();
     }
 
