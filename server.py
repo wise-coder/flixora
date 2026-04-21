@@ -1620,13 +1620,13 @@ class FlixoraHandler(SimpleHTTPRequestHandler):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Serve Flixora with Moviebox-backed API endpoints.")
+    parser = argparse.ArgumentParser(description="Serve FeemX with Moviebox-backed API endpoints.")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", default=DEFAULT_PORT, type=int)
     args = parser.parse_args()
 
     server = ThreadingHTTPServer((args.host, args.port), FlixoraHandler)
-    print(f"Serving Flixora at http://{args.host}:{args.port}")
+    print(f"Serving FeemX at http://{args.host}:{args.port}")
     print("Press Ctrl+C to stop.")
     try:
         server.serve_forever()

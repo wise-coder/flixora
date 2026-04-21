@@ -1743,7 +1743,7 @@ function initContactForm() {
     const formData = new FormData(contactForm);
     const name = String(formData.get("name") || "").trim();
     const email = String(formData.get("email") || "").trim();
-    const subject = String(formData.get("subject") || "").trim() || "Flixora inquiry";
+    const subject = String(formData.get("subject") || "").trim() || "FeemX inquiry";
     const message = String(formData.get("message") || "").trim();
 
     const bodyLines = [
@@ -1834,7 +1834,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     initPageSliders(document);
   } catch (error) {
-    console.error("Failed to initialize Flixora", error);
+    console.error("Failed to initialize FeemX", error);
   } finally {
     window.setTimeout(hideLoader, 300);
   }
