@@ -1,4 +1,4 @@
 window.FLIXORA_CONFIG = {
-  apiBase: "https://flixora-duok.onrender.com",
+  apiBase: "https://feemx.onrender.com",
   preferConfiguredApiInLocalDev: false,
 };
