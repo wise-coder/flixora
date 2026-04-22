@@ -39,6 +39,7 @@ PLAYABLE_CACHE_TTL_SECONDS = DETAIL_CACHE_TTL_SECONDS
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 PAGE_MOVIE_LIMIT = 100
+HOME_CATALOG_LIMIT = 48
 SEARCH_PAGE_SIZE = 20
 HOME_PAGE_FETCH_LIMIT = 5
 PLAYABLE_BATCH_SIZE = 8
@@ -510,21 +511,14 @@ async def fetch_home_payload() -> dict[str, Any]:
                     if isinstance(subject, dict):
                         candidate_subjects.append(subject)
 
-        # Build the homepage from lightweight subject data so /api/home can
-        # respond quickly on cold starts. Full playback resolution happens on
-        # the detail page where it is actually needed.
-        direct_catalog = dedupe_catalog_variants(
-            [
-                normalize_subject(subject)
-                for subject in candidate_subjects
-                if str(
-                    subject.get("subjectId")
-                    or subject.get("subject_id")
-                    or subject.get("id")
-                    or ""
-                ).strip()
-            ]
-        )[:PAGE_MOVIE_LIMIT]
+        # Only expose titles that already have a verified Moviebox Direct
+        # playback path. We keep the home catalog smaller here so cold starts
+        # stay responsive while categories still show direct-playable titles.
+        direct_catalog = await filter_subjects_to_direct_movies(
+            client_session,
+            candidate_subjects,
+            limit=HOME_CATALOG_LIMIT,
+        )
 
         return build_home_payload(direct_catalog, hero_ids)
 
@@ -905,35 +899,30 @@ def store_cached_playable_movie(
 
 async def fetch_direct_playable_movie(
     client_session: MovieBoxHttpClient,
-    subject_id: str,
+    subject: dict[str, Any],
 ) -> dict[str, Any] | None:
+    subject_id = str(
+        subject.get("subjectId")
+        or subject.get("subject_id")
+        or subject.get("id")
+        or ""
+    ).strip()
+    if not subject_id:
+        return None
+
     cached = copy_cached_playable_movie(subject_id)
     if cached is not Ellipsis:
         return cached
 
+    movie = normalize_subject(subject)
+
     try:
-        detail = await ItemDetails(client_session).get_content(subject_id)
+        downloadables = await DownloadableFilesDetail(client_session).get_content(subject_id)
     except Exception:
         return store_cached_playable_movie(subject_id, None)
 
-    movie = normalize_subject(detail)
-
-    if movie.get("mediaType") == "series":
-        series_items = await fetch_series_items(client_session, detail, movie)
-        if not series_items:
-            return store_cached_playable_movie(subject_id, None)
-
-        movie["seriesItems"] = series_items
-        movie["downloadUrl"] = first_url(
-            series_items[0].get("downloadUrl"),
-            movie.get("downloadUrl"),
-        )
-        movie["detailUrl"] = first_url(movie.get("detailUrl"), detail.get("detailUrl"))
-        movie["category"] = primary_category(movie)
-        return store_cached_playable_movie(subject_id, movie)
-
     resource_options = filter_direct_moviebox_options(
-        await fetch_movie_playback_options(client_session, detail)
+        build_downloadable_resource_options(downloadables)
     )
     if not resource_options:
         return store_cached_playable_movie(subject_id, None)
@@ -946,7 +935,6 @@ async def fetch_direct_playable_movie(
         best_quality.get("playUrl"),
         movie.get("downloadUrl"),
     )
-    movie["detailUrl"] = first_url(movie.get("detailUrl"), detail.get("detailUrl"))
 
     return store_cached_playable_movie(subject_id, movie)
 
@@ -956,7 +944,7 @@ async def filter_subjects_to_direct_movies(
     subjects: list[dict[str, Any]],
     limit: int = PAGE_MOVIE_LIMIT,
 ) -> list[dict[str, Any]]:
-    candidates: list[str] = []
+    candidates: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
 
     for subject in subjects:
@@ -973,7 +961,7 @@ async def filter_subjects_to_direct_movies(
             continue
 
         seen_ids.add(subject_id)
-        candidates.append(subject_id)
+        candidates.append(subject)
 
     direct_movies: list[dict[str, Any]] = []
 
@@ -981,8 +969,8 @@ async def filter_subjects_to_direct_movies(
         batch_ids = candidates[index:index + PLAYABLE_BATCH_SIZE]
         batch_results = await asyncio.gather(
             *(
-                fetch_direct_playable_movie(client_session, subject_id)
-                for subject_id in batch_ids
+                fetch_direct_playable_movie(client_session, subject)
+                for subject in batch_ids
             ),
             return_exceptions=True,
         )
