@@ -1,4 +1,36 @@
-let favorites = JSON.parse(localStorage.getItem("flixoraFavorites")) || [];
+function safeStorageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    console.warn(`Unable to read localStorage key "${key}"`, error);
+    return null;
+  }
+}
+
+function safeStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (error) {
+    console.warn(`Unable to write localStorage key "${key}"`, error);
+  }
+}
+
+function readStoredJson(key, fallbackValue) {
+  const rawValue = safeStorageGet(key);
+  if (!rawValue) {
+    return fallbackValue;
+  }
+
+  try {
+    return JSON.parse(rawValue);
+  } catch (error) {
+    console.warn(`Ignoring invalid JSON in localStorage key "${key}"`, error);
+    return fallbackValue;
+  }
+}
+
+const storedFavorites = readStoredJson("flixoraFavorites", []);
+let favorites = Array.isArray(storedFavorites) ? storedFavorites : [];
 let homePayload = null;
 let categoryPayload = null;
 let detailPayload = null;
@@ -333,7 +365,7 @@ function shouldTrackMovieView(movieId) {
   }
 
   try {
-    const lastTrackedAt = Number(localStorage.getItem(getMovieViewStorageKey(movieId)) || "0");
+    const lastTrackedAt = Number(safeStorageGet(getMovieViewStorageKey(movieId)) || "0");
     return !lastTrackedAt || (Date.now() - lastTrackedAt) > VIEW_TRACK_TTL_MS;
   } catch {
     return true;
@@ -346,7 +378,7 @@ function markMovieViewTracked(movieId) {
   }
 
   try {
-    localStorage.setItem(getMovieViewStorageKey(movieId), String(Date.now()));
+    safeStorageSet(getMovieViewStorageKey(movieId), String(Date.now()));
   } catch {
     // Ignore storage failures and keep the page usable.
   }
@@ -710,7 +742,7 @@ function toggleFavorite(event, movieId) {
     heart.classList.add("active");
   }
 
-  localStorage.setItem("flixoraFavorites", JSON.stringify(favorites));
+  safeStorageSet("flixoraFavorites", JSON.stringify(favorites));
 }
 
 function renderCards(container, data = [], count = PAGE_MOVIE_LIMIT) {
@@ -1833,6 +1865,11 @@ function closeModal() {
 function initAnimations() {
   const elements = document.querySelectorAll(".animate-on-scroll");
   if (!elements.length) {
+    return;
+  }
+
+  if (typeof IntersectionObserver !== "function") {
+    elements.forEach((element) => element.classList.add("animate"));
     return;
   }
 
