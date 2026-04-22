@@ -6,7 +6,9 @@ let heroIntervalId = null;
 let activeSearchToken = 0;
 const PAGE_MOVIE_LIMIT = 100;
 const FLIXORA_CONFIG = window.FLIXORA_CONFIG || {};
-const API_BASE = resolveApiBase();
+let API_BASE = resolveApiBase();
+let apiBaseResolved = false;
+let apiBaseResolutionPromise = null;
 const VIEW_TRACK_TTL_MS = 12 * 60 * 60 * 1000;
 
 const categoryDescriptions = {
@@ -24,7 +26,11 @@ const sitePages = [
 ];
 
 function normalizeBaseUrl(value) {
-  return String(value || "").trim().replace(/\/+$/, "");
+  const normalized = String(value || "").trim().replace(/\/+$/, "");
+  if (!normalized || normalized === "null" || normalized === "undefined") {
+    return "";
+  }
+  return normalized;
 }
 
 function isAbsoluteUrl(value) {
@@ -33,26 +39,132 @@ function isAbsoluteUrl(value) {
 
 function resolveApiBase() {
   const configuredBase = normalizeBaseUrl(FLIXORA_CONFIG.apiBase);
-  const hostname = window.location.hostname;
-  const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1";
+  if (configuredBase) {
+    return configuredBase;
+  }
 
-  if (isLocalHost && !FLIXORA_CONFIG.preferConfiguredApiInLocalDev) {
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
+  const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0";
+  const currentPort = String(window.location.port || "").trim();
+
+  if (protocol === "file:") {
+    return "http://127.0.0.1:8000";
+  }
+
+  if (isLocalHost && !FLIXORA_CONFIG.preferConfiguredApiInLocalDev && (currentPort === "8000" || currentPort === "8001")) {
     return window.location.origin;
   }
 
-  return configuredBase || window.location.origin;
+  if (isLocalHost) {
+    return `http://${hostname === "0.0.0.0" ? "127.0.0.1" : hostname}:8000`;
+  }
+
+  return window.location.origin;
 }
 
-function toApiUrl(path) {
-  if (!path) {
+function appendCandidate(target, seen, candidate) {
+  const normalizedCandidate = normalizeBaseUrl(candidate);
+  if (!normalizedCandidate || seen.has(normalizedCandidate)) {
+    return;
+  }
+  seen.add(normalizedCandidate);
+  target.push(normalizedCandidate);
+}
+
+function getApiBaseCandidates() {
+  const candidates = [];
+  const seen = new Set();
+  const configuredBase = normalizeBaseUrl(FLIXORA_CONFIG.apiBase);
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
+  const currentOrigin = normalizeBaseUrl(window.location.origin);
+  const currentPort = String(window.location.port || "").trim();
+  const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0";
+  const localHostname = hostname === "0.0.0.0" ? "127.0.0.1" : hostname;
+
+  appendCandidate(candidates, seen, configuredBase);
+  if (protocol === "http:" || protocol === "https:") {
+    appendCandidate(candidates, seen, currentOrigin);
+    if (hostname && currentPort !== "8000") {
+      appendCandidate(candidates, seen, `${protocol}//${localHostname || hostname}:8000`);
+    }
+    if (hostname && currentPort !== "8001") {
+      appendCandidate(candidates, seen, `${protocol}//${localHostname || hostname}:8001`);
+    }
+  }
+
+  if (protocol === "file:" || isLocalHost) {
+    if (localHostname) {
+      appendCandidate(candidates, seen, `http://${localHostname}:8000`);
+      appendCandidate(candidates, seen, `http://${localHostname}:8001`);
+    }
+    appendCandidate(candidates, seen, "http://127.0.0.1:8000");
+    appendCandidate(candidates, seen, "http://127.0.0.1:8001");
+    appendCandidate(candidates, seen, "http://localhost:8000");
+    appendCandidate(candidates, seen, "http://localhost:8001");
+  }
+
+  return candidates;
+}
+
+async function canReachApi(baseUrl) {
+  try {
+    const response = await fetch(`${baseUrl}/api/health`, {
+      headers: { Accept: "application/json" },
+    });
+    return response.ok;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function ensureApiBase() {
+  if (apiBaseResolved && API_BASE) {
     return API_BASE;
+  }
+
+  if (apiBaseResolutionPromise) {
+    return apiBaseResolutionPromise;
+  }
+
+  apiBaseResolutionPromise = (async () => {
+    const candidates = getApiBaseCandidates();
+
+    for (const candidate of candidates) {
+      if (await canReachApi(candidate)) {
+        API_BASE = candidate;
+        apiBaseResolved = true;
+        return API_BASE;
+      }
+    }
+
+    apiBaseResolved = true;
+    return API_BASE;
+  })();
+
+  try {
+    return await apiBaseResolutionPromise;
+  } finally {
+    apiBaseResolutionPromise = null;
+  }
+}
+
+function toApiUrl(path, baseUrl = API_BASE) {
+  if (!path) {
+    return normalizeBaseUrl(baseUrl);
   }
 
   if (isAbsoluteUrl(path)) {
     return path;
   }
 
-  return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  const normalizedBase = normalizeBaseUrl(baseUrl);
+  if (!normalizedBase) {
+    return path;
+  }
+
+  return `${normalizedBase}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 function normalizeBackendAssetUrl(url) {
@@ -91,7 +203,7 @@ function escapeHtml(value) {
 }
 
 async function fetchJson(path) {
-  const requestUrl = toApiUrl(path);
+  const requestUrl = toApiUrl(path, await ensureApiBase());
   const response = await fetch(requestUrl, { headers: { Accept: "application/json" } });
   if (!response.ok) {
     let errorMessage = `Request failed for ${requestUrl} with status ${response.status}`;
@@ -288,7 +400,7 @@ async function registerMovieView(movieId) {
   }
 
   try {
-    const response = await fetch(toApiUrl(`/api/movie-view?id=${encodeURIComponent(movieId)}`), {
+    const response = await fetch(toApiUrl(`/api/movie-view?id=${encodeURIComponent(movieId)}`, await ensureApiBase()), {
       method: "POST",
     });
     if (!response.ok) {
