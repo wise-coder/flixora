@@ -1,4 +1,5 @@
 window.FLIXORA_CONFIG = {
-  apiBase: "https://feemx.onrender.com",
+  // Empty base means "use this site's own origin" for API requests.
+  apiBase: "",
   preferConfiguredApiInLocalDev: false,
 };

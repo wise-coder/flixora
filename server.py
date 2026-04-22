@@ -63,6 +63,22 @@ DASH_BASE_URL_PATTERN = re.compile(r"<BaseURL>.*?</BaseURL>", re.IGNORECASE | re
 PERIOD_TAG_PATTERN = re.compile(r"(<Period\b[^>]*>)", re.IGNORECASE)
 
 
+def resolve_server_port() -> int:
+    raw_port = str(os.getenv("PORT", "")).strip()
+    if raw_port.isdigit():
+        return int(raw_port)
+    return DEFAULT_PORT
+
+
+def resolve_server_host() -> str:
+    explicit_host = str(os.getenv("HOST", "")).strip()
+    if explicit_host:
+        return explicit_host
+    if str(os.getenv("PORT", "")).strip():
+        return "0.0.0.0"
+    return DEFAULT_HOST
+
+
 def load_view_counts() -> dict[str, int]:
     try:
         payload = json.loads(VIEWS_FILE.read_text(encoding="utf-8"))
@@ -1428,7 +1444,13 @@ class FlixoraHandler(SimpleHTTPRequestHandler):
         params = parse_qs(parsed.query)
 
         try:
-            if parsed.path == "/api/home":
+            if parsed.path == "/api/health":
+                payload = {
+                    "ok": True,
+                    "service": "flixora",
+                    "timestamp": int(time.time()),
+                }
+            elif parsed.path == "/api/home":
                 payload = resolve_home(force_refresh=params.get("refresh", ["0"])[0] == "1")
             elif parsed.path == "/api/category":
                 payload = resolve_category(params.get("category", ["Trending"])[0])
@@ -1621,8 +1643,8 @@ class FlixoraHandler(SimpleHTTPRequestHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Serve FeemX with Moviebox-backed API endpoints.")
-    parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument("--port", default=DEFAULT_PORT, type=int)
+    parser.add_argument("--host", default=resolve_server_host())
+    parser.add_argument("--port", default=resolve_server_port(), type=int)
     args = parser.parse_args()
 
     server = ThreadingHTTPServer((args.host, args.port), FlixoraHandler)
