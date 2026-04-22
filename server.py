@@ -7,6 +7,7 @@ import os
 import re
 import threading
 import time
+import traceback
 import uuid
 from collections import Counter
 from copy import deepcopy
@@ -509,11 +510,21 @@ async def fetch_home_payload() -> dict[str, Any]:
                     if isinstance(subject, dict):
                         candidate_subjects.append(subject)
 
-        direct_catalog = await filter_subjects_to_direct_movies(
-            client_session,
-            candidate_subjects,
-            limit=PAGE_MOVIE_LIMIT,
-        )
+        # Build the homepage from lightweight subject data so /api/home can
+        # respond quickly on cold starts. Full playback resolution happens on
+        # the detail page where it is actually needed.
+        direct_catalog = dedupe_catalog_variants(
+            [
+                normalize_subject(subject)
+                for subject in candidate_subjects
+                if str(
+                    subject.get("subjectId")
+                    or subject.get("subject_id")
+                    or subject.get("id")
+                    or ""
+                ).strip()
+            ]
+        )[:PAGE_MOVIE_LIMIT]
 
         return build_home_payload(direct_catalog, hero_ids)
 
@@ -1506,6 +1517,11 @@ class FlixoraHandler(SimpleHTTPRequestHandler):
                 self.send_error(HTTPStatus.NOT_FOUND, "Unknown API endpoint")
                 return
         except Exception as exc:
+            print(
+                f"[flixora] API error on {parsed.path}: {exc}",
+                flush=True,
+            )
+            print(traceback.format_exc(), flush=True)
             self.respond_json(
                 {"error": str(exc), "path": parsed.path},
                 status=HTTPStatus.INTERNAL_SERVER_ERROR,

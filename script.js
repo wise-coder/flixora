@@ -63,6 +63,16 @@ function normalizeBackendAssetUrl(url) {
   return toApiUrl(url);
 }
 
+class FlixoraApiError extends Error {
+  constructor(message, options = {}) {
+    super(message);
+    this.name = "FlixoraApiError";
+    this.status = options.status || 0;
+    this.path = options.path || "";
+    this.details = options.details || "";
+  }
+}
+
 function debounce(fn, delay) {
   let timeoutId;
   return (...args) => {
@@ -84,9 +94,85 @@ async function fetchJson(path) {
   const requestUrl = toApiUrl(path);
   const response = await fetch(requestUrl, { headers: { Accept: "application/json" } });
   if (!response.ok) {
-    throw new Error(`Request failed for ${requestUrl} with status ${response.status}`);
+    let errorMessage = `Request failed for ${requestUrl} with status ${response.status}`;
+    let errorDetails = "";
+
+    try {
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        const payload = await response.json();
+        if (payload?.error) {
+          errorMessage = String(payload.error);
+        }
+        if (payload?.path) {
+          errorDetails = `Endpoint: ${payload.path}`;
+        }
+      } else {
+        const text = (await response.text()).trim();
+        if (text) {
+          errorDetails = text.slice(0, 240);
+        }
+      }
+    } catch (error) {
+      console.error("Unable to parse API error response", error);
+    }
+
+    throw new FlixoraApiError(errorMessage, {
+      status: response.status,
+      path,
+      details: errorDetails,
+    });
   }
   return response.json();
+}
+
+function describeAppError(error, contextLabel = "this page") {
+  const statusPrefix = error?.status ? `Error ${error.status}: ` : "";
+  const detailSuffix = error?.details ? ` ${error.details}` : "";
+  const message = String(error?.message || "").trim();
+
+  if (message) {
+    return `${statusPrefix}${message}${detailSuffix}`.trim();
+  }
+
+  return `${statusPrefix}We couldn't load ${contextLabel} right now.${detailSuffix}`.trim();
+}
+
+function showAppError(error, contextLabel = "this page") {
+  const contentArea = document.querySelector(".content-area");
+  if (!contentArea) {
+    return;
+  }
+
+  document.body.classList.add("app-error-active");
+
+  let errorState = document.getElementById("appErrorState");
+  if (!errorState) {
+    errorState = document.createElement("section");
+    errorState.id = "appErrorState";
+    errorState.className = "app-error-banner";
+
+    const topbar = contentArea.querySelector(".topbar");
+    if (topbar?.nextSibling) {
+      contentArea.insertBefore(errorState, topbar.nextSibling);
+    } else {
+      contentArea.appendChild(errorState);
+    }
+  }
+
+  errorState.innerHTML = `
+    <p class="app-error-eyebrow">Backend Connection Problem</p>
+    <h2>We couldn't load ${escapeHtml(contextLabel)}.</h2>
+    <p class="app-error-message">${escapeHtml(describeAppError(error, contextLabel))}</p>
+    <div class="app-error-actions">
+      <button class="pill-btn solid-btn" type="button" data-app-error-retry>Try Again</button>
+      <a class="pill-btn ghost-btn" href="index.html">Back To Home</a>
+    </div>
+  `;
+
+  errorState.querySelector("[data-app-error-retry]")?.addEventListener("click", () => {
+    window.location.reload();
+  });
 }
 
 function formatViewCount(count) {
@@ -1796,8 +1882,11 @@ async function loadCategoryPage() {
 
 async function loadMovieDetail() {
   const movieId = getMovieIdFromUrl() || homePayload?.hero?.[0]?.id || homePayload?.catalog?.[0]?.id;
+  if (!movieId) {
+    throw new Error("No movie id was available for the detail page.");
+  }
   detailPayload = await fetchJson(`/api/movie?id=${encodeURIComponent(movieId)}`);
-  renderMovieDetailPayload(detailPayload, homePayload);
+  renderMovieDetailPayload(detailPayload, homePayload || { catalog: [], categories: [] });
   const trackedViewCount = await registerMovieView(movieId);
   if (trackedViewCount !== null && detailPayload?.movie) {
     detailPayload.movie.viewCount = trackedViewCount;
@@ -1809,32 +1898,47 @@ document.addEventListener("DOMContentLoaded", async () => {
   initAnimations();
   initSearch();
   initContactForm();
+  let sharedHomeError = null;
+  const isHomePage = Boolean(document.querySelector(".page-home"));
+  const isCategoryPage = Boolean(document.querySelector(".page-category"));
+  const isDetailPage = Boolean(document.querySelector(".page-detail"));
 
   try {
     homePayload = await getHomeData();
     updateFeaturedLinks(homePayload);
   } catch (error) {
+    sharedHomeError = error;
     console.error("Failed to load shared navigation data", error);
   }
 
   renderSidebarNav(homePayload?.categories || []);
 
   try {
-    if (document.querySelector(".page-home") && homePayload) {
+    if (isHomePage) {
+      if (!homePayload) {
+        throw sharedHomeError || new Error("Home data is unavailable.");
+      }
       await loadHomePage();
     }
 
-    if (document.querySelector(".page-category")) {
+    if (isCategoryPage) {
       await loadCategoryPage();
     }
 
-    if (document.querySelector(".page-detail") && homePayload) {
+    if (isDetailPage) {
       await loadMovieDetail();
     }
 
     initPageSliders(document);
   } catch (error) {
     console.error("Failed to initialize FeemX", error);
+    if (isHomePage) {
+      showAppError(error, "the home page");
+    } else if (isCategoryPage) {
+      showAppError(error, "this category page");
+    } else if (isDetailPage) {
+      showAppError(error, "this movie page");
+    }
   } finally {
     window.setTimeout(hideLoader, 300);
   }

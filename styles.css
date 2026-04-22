@@ -238,6 +238,47 @@ input {
   max-width: 100%;
 }
 
+.app-error-banner {
+  margin: 0.75rem 0 1.5rem;
+  padding: 1.5rem;
+  border: 1px solid rgba(229, 9, 20, 0.28);
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(229, 9, 20, 0.14), rgba(255, 255, 255, 0.03)),
+    rgba(18, 18, 18, 0.96);
+  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.28);
+}
+
+.app-error-eyebrow {
+  margin-bottom: 0.45rem;
+  color: #ff9a9f;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.app-error-banner h2 {
+  margin-bottom: 0.55rem;
+  font-size: clamp(1.5rem, 3vw, 2.25rem);
+}
+
+.app-error-message {
+  max-width: 70ch;
+  color: var(--text-secondary);
+}
+
+.app-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  margin-top: 1.2rem;
+}
+
+.app-error-active .content-area > :not(.topbar):not(.app-error-banner) {
+  display: none !important;
+}
+
 .topbar {
   position: sticky;
   top: 0;
