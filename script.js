@@ -379,11 +379,16 @@ function bindOpenDetailControl(control, movieId) {
 }
 
 function getBestExternalLink(movie) {
+  const directChoice = buildPlaybackChoices(movie)[0];
+  if (directChoice?.playUrl) {
+    return directChoice.playUrl;
+  }
+
+  if (isDirectMediaUrl(movie?.downloadUrl)) {
+    return movie.downloadUrl;
+  }
+
   return (
-    movie?.resourceOptions?.[0]?.qualities?.[0]?.playUrl ||
-    movie?.downloadUrl ||
-    movie?.trailer ||
-    movie?.detailUrl ||
     movie?.resourceOptions?.[0]?.downloadUrl ||
     movie?.resourceOptions?.[0]?.resourceLink ||
     ""
@@ -463,6 +468,11 @@ function buildPlaybackChoices(movie) {
   const seen = new Set();
 
   (movie.resourceOptions || []).forEach((option) => {
+    const sourceName = String(option?.source || "").trim();
+    if (!/^moviebox direct/i.test(sourceName)) {
+      return;
+    }
+
     const optionQualities = Array.isArray(option.qualities) && option.qualities.length
       ? option.qualities
       : [{
@@ -480,7 +490,7 @@ function buildPlaybackChoices(movie) {
       const streamType = quality.streamType || option.streamType || (playUrl.toLowerCase().includes(".mpd") ? "dash" : "file");
       const manifestUrl = quality.manifestUrl || option.manifestUrl || "";
       const key = `${option.source}::${quality.resolution || 0}::${streamType}::${manifestUrl || playUrl}`;
-      if (!playUrl || seen.has(key)) {
+      if (!playUrl || streamType === "dash" || !isDirectMediaUrl(playUrl) || seen.has(key)) {
         return;
       }
 
@@ -498,23 +508,6 @@ function buildPlaybackChoices(movie) {
       });
     });
   });
-
-  if (movie.trailer) {
-    const trailerKey = `trailer::${movie.trailer}`;
-    if (!seen.has(trailerKey)) {
-      choices.push({
-        source: "Trailer",
-        label: "Trailer",
-        resolution: 0,
-        playUrl: movie.trailer,
-        downloadUrl: movie.trailer,
-        sourceUrl: movie.trailer,
-        direct: isDirectMediaUrl(movie.trailer),
-        streamType: "file",
-        manifestUrl: "",
-      });
-    }
-  }
 
   return choices;
 }
@@ -1132,13 +1125,13 @@ function renderMovieDetailPayload(payload, homeData) {
   let lastCenterTapAt = 0;
   let currentSubtitle = null;
   let currentPlayback = playbackChoices[0] || {
-    source: "Moviebox",
-    label: "Source",
+    source: "Moviebox Direct",
+    label: "Unavailable",
     resolution: 0,
-    playUrl: getBestExternalLink(movie),
-    downloadUrl: getBestExternalLink(movie),
-    sourceUrl: movie.detailUrl || getBestExternalLink(movie),
-    direct: isDirectMediaUrl(getBestExternalLink(movie)),
+    playUrl: "",
+    downloadUrl: "",
+    sourceUrl: "",
+    direct: false,
     streamType: "file",
     manifestUrl: "",
   };
@@ -1377,6 +1370,7 @@ function renderMovieDetailPayload(payload, homeData) {
 
   function playCurrentSelection() {
     if (!currentPlayback?.playUrl) {
+      window.alert("A direct full-movie stream is not available for this title right now.");
       return;
     }
 
@@ -1521,6 +1515,7 @@ function renderMovieDetailPayload(payload, homeData) {
     resourceSelect.innerHTML = "";
 
     if (playbackChoices.length) {
+      resourceSelect.disabled = false;
       playbackChoices.forEach((choice) => {
         const selectOption = document.createElement("option");
         selectOption.value = choice.playUrl || choice.sourceUrl || "";
@@ -1533,9 +1528,10 @@ function renderMovieDetailPayload(payload, homeData) {
         applyPlaybackChoice(activeChoice);
       };
     } else {
+      resourceSelect.disabled = true;
       const fallbackOption = document.createElement("option");
-      fallbackOption.value = currentPlayback.playUrl;
-      fallbackOption.textContent = "Open Source";
+      fallbackOption.value = "";
+      fallbackOption.textContent = "No direct full movie available";
       resourceSelect.appendChild(fallbackOption);
       resourceSelect.onchange = null;
     }

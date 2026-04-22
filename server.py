@@ -205,6 +205,10 @@ def is_series(subject_type: Any) -> bool:
     return str(subject_type) == str(int(SubjectType.TV_SERIES))
 
 
+def is_movie_subject(subject: dict[str, Any]) -> bool:
+    return isinstance(subject, dict) and not is_series(subject.get("subjectType"))
+
+
 def normalize_subject(subject: dict[str, Any]) -> dict[str, Any]:
     genres = split_csv(subject.get("genre"))
     cover = subject.get("cover") or {}
@@ -915,6 +919,8 @@ async def fetch_direct_playable_movie(
         return cached
 
     movie = normalize_subject(subject)
+    if movie.get("mediaType") != "movie" or not is_movie_subject(subject):
+        return store_cached_playable_movie(subject_id, None)
 
     try:
         downloadables = await DownloadableFilesDetail(client_session).get_content(subject_id)
@@ -928,6 +934,7 @@ async def fetch_direct_playable_movie(
         return store_cached_playable_movie(subject_id, None)
 
     movie["resourceOptions"] = resource_options
+    movie["trailer"] = ""
 
     best_quality = resource_options[0]["qualities"][0]
     movie["downloadUrl"] = first_url(
@@ -1176,14 +1183,21 @@ def neighbor_ids(movie_id: str, catalog: list[dict[str, Any]]) -> tuple[str, str
 async def fetch_detail_payload(subject_id: str, home: dict[str, Any]) -> dict[str, Any]:
     async with MovieBoxHttpClient(timeout=30) as client_session:
         detail = await ItemDetails(client_session, include_seasons=True).get_content(subject_id)
+        movie = normalize_subject(detail)
+        if movie.get("mediaType") != "movie" or not is_movie_subject(detail):
+            raise LookupError("Only direct-playable full movies are available here.")
+
         resource_options = filter_direct_moviebox_options(
             await fetch_movie_playback_options(client_session, detail)
         )
-        series_items = await fetch_series_items(client_session, detail, normalize_subject(detail))
+        if not resource_options:
+            raise LookupError("No Moviebox Direct full-movie source is available for this title.")
 
-    movie = normalize_subject(detail)
+        series_items = await fetch_series_items(client_session, detail, movie)
+
     movie["subtitleOptions"] = await fetch_subtitle_options(movie)
     movie["resourceOptions"] = resource_options
+    movie["trailer"] = ""
     if resource_options:
         best_quality = resource_options[0]["qualities"][0]
         movie["downloadUrl"] = best_quality.get("downloadUrl") or movie.get("downloadUrl") or ""
@@ -1505,6 +1519,12 @@ class FlixoraHandler(SimpleHTTPRequestHandler):
                 self.send_error(HTTPStatus.NOT_FOUND, "Unknown API endpoint")
                 return
         except Exception as exc:
+            if isinstance(exc, LookupError):
+                self.respond_json(
+                    {"error": str(exc), "path": parsed.path},
+                    status=HTTPStatus.NOT_FOUND,
+                )
+                return
             print(
                 f"[flixora] API error on {parsed.path}: {exc}",
                 flush=True,
