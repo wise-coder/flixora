@@ -42,6 +42,8 @@ let API_BASE = resolveApiBase();
 let apiBaseResolved = false;
 let apiBaseResolutionPromise = null;
 const VIEW_TRACK_TTL_MS = 12 * 60 * 60 * 1000;
+const API_HEALTHCHECK_TIMEOUT_MS = 5000;
+const API_REQUEST_TIMEOUT_MS = 20000;
 
 const categoryDescriptions = {
   Trending: "Fresh picks pulled from the latest Moviebox homepage feed.",
@@ -141,13 +143,19 @@ function getApiBaseCandidates() {
 }
 
 async function canReachApi(baseUrl) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), API_HEALTHCHECK_TIMEOUT_MS);
+
   try {
     const response = await fetch(`${baseUrl}/api/health`, {
       headers: { Accept: "application/json" },
+      signal: controller.signal,
     });
     return response.ok;
   } catch (error) {
     return false;
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 }
 
@@ -236,7 +244,27 @@ function escapeHtml(value) {
 
 async function fetchJson(path) {
   const requestUrl = toApiUrl(path, await ensureApiBase());
-  const response = await fetch(requestUrl, { headers: { Accept: "application/json" } });
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+  let response;
+
+  try {
+    response = await fetch(requestUrl, {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new FlixoraApiError(
+        `The backend did not respond within ${Math.round(API_REQUEST_TIMEOUT_MS / 1000)} seconds.`,
+        { path }
+      );
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+
   if (!response.ok) {
     let errorMessage = `Request failed for ${requestUrl} with status ${response.status}`;
     let errorDetails = "";

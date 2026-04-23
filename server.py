@@ -30,6 +30,7 @@ from moviebox_api.v3.urls import PLAY_INFO_PATH
 
 ROOT_DIR = Path(__file__).resolve().parent
 VIEWS_FILE = ROOT_DIR / "movie-views.json"
+BUNDLED_HOME_FILE = ROOT_DIR / "moviebox-api" / "assets" / "recons2" / "homepage.json"
 HOME_CACHE_TTL_SECONDS = 15 * 60
 DETAIL_CACHE_TTL_SECONDS = 15 * 60
 SEARCH_CACHE_TTL_SECONDS = 5 * 60
@@ -43,6 +44,10 @@ HOME_CATALOG_LIMIT = 48
 SEARCH_PAGE_SIZE = 20
 HOME_PAGE_FETCH_LIMIT = 5
 PLAYABLE_BATCH_SIZE = 8
+HOME_PAGE_REQUEST_TIMEOUT_SECONDS = 6
+PLAYABLE_PROBE_TIMEOUT_SECONDS = 4
+HOME_PLAYABLE_PROBE_LIMIT = 12
+SEARCH_PLAYABLE_PROBE_LIMIT = 16
 DIRECT_SOURCE_PREFIX = "moviebox direct"
 SPECIAL_SERIES_CATEGORY_QUERIES = {
     "Korean Drama": ["korean drama", "kdrama"],
@@ -355,6 +360,24 @@ def dedupe_catalog_variants(movies: list[dict[str, Any]]) -> list[dict[str, Any]
     return unique
 
 
+def merge_catalogs(*catalogs: list[dict[str, Any]], limit: int = PAGE_MOVIE_LIMIT) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for catalog in catalogs:
+        for movie in catalog:
+            movie_id = str(movie.get("id") or "").strip()
+            if not movie_id or movie_id in seen_ids:
+                continue
+
+            seen_ids.add(movie_id)
+            merged.append(movie)
+            if len(merged) >= limit:
+                return merged[:limit]
+
+    return merged[:limit]
+
+
 def apply_view_count_to_movie(movie: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(movie, dict):
         return movie
@@ -481,6 +504,46 @@ def fallback_catalog_from_subjects(
     return normalized_movies[:limit]
 
 
+def load_bundled_home_payload() -> dict[str, Any] | None:
+    try:
+        raw_home = json.loads(BUNDLED_HOME_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+
+    if not isinstance(raw_home, dict):
+        return None
+
+    hero_ids: list[str] = []
+    candidate_subjects: list[dict[str, Any]] = []
+
+    for item in raw_home.get("items", []):
+        if not isinstance(item, dict):
+            continue
+
+        banner = item.get("banner") or {}
+        for banner_item in banner.get("banners", []):
+            if not isinstance(banner_item, dict):
+                continue
+            subject = banner_item.get("subject")
+            if isinstance(subject, dict):
+                subject_id = str(subject.get("subjectId") or "").strip()
+                if subject_id:
+                    hero_ids.append(subject_id)
+
+        for subject in item.get("subjects", []):
+            if isinstance(subject, dict):
+                candidate_subjects.append(subject)
+
+    if not candidate_subjects:
+        return None
+
+    catalog = fallback_catalog_from_subjects(
+        candidate_subjects,
+        limit=HOME_CATALOG_LIMIT,
+    )
+    return build_home_payload(catalog, hero_ids)
+
+
 def stale(entry: dict[str, Any], ttl_seconds: int) -> bool:
     return time.time() - entry.get("timestamp", 0) > ttl_seconds
 
@@ -495,10 +558,16 @@ async def fetch_home_payload() -> dict[str, Any]:
             homepage = Homepage(client_session)
             homepage._page_number = page_number
             try:
-                raw_home = await homepage.get_content()
+                raw_home = await asyncio.wait_for(
+                    homepage.get_content(),
+                    timeout=HOME_PAGE_REQUEST_TIMEOUT_SECONDS,
+                )
             except Exception:
                 if raw_pages:
                     break
+                bundled_payload = load_bundled_home_payload()
+                if bundled_payload is not None:
+                    return bundled_payload
                 raise
 
             raw_pages.append(raw_home)
@@ -529,21 +598,27 @@ async def fetch_home_payload() -> dict[str, Any]:
                     if isinstance(subject, dict):
                         candidate_subjects.append(subject)
 
-        # Only expose titles that already have a verified Moviebox Direct
-        # playback path. We keep the home catalog smaller here so cold starts
-        # stay responsive while categories still show direct-playable titles.
-        direct_catalog = await filter_subjects_to_direct_movies(
-            client_session,
+        fallback_catalog = fallback_catalog_from_subjects(
             candidate_subjects,
             limit=HOME_CATALOG_LIMIT,
         )
-        if not direct_catalog:
-            direct_catalog = fallback_catalog_from_subjects(
-                candidate_subjects,
-                limit=HOME_CATALOG_LIMIT,
-            )
 
-        return build_home_payload(direct_catalog, hero_ids)
+        # Probe only a small slice of candidates for verified direct playback.
+        # Render cold starts can otherwise spend tens of seconds waiting on
+        # upstream Moviebox resource checks before the first page can render.
+        direct_catalog = await filter_subjects_to_direct_movies(
+            client_session,
+            candidate_subjects[:HOME_PLAYABLE_PROBE_LIMIT],
+            limit=HOME_PLAYABLE_PROBE_LIMIT,
+            probe_timeout_seconds=PLAYABLE_PROBE_TIMEOUT_SECONDS,
+        )
+        merged_catalog = merge_catalogs(
+            direct_catalog,
+            fallback_catalog,
+            limit=HOME_CATALOG_LIMIT,
+        )
+
+        return build_home_payload(merged_catalog, hero_ids)
 
 
 def resolve_home(force_refresh: bool = False) -> dict[str, Any]:
@@ -1035,6 +1110,7 @@ async def filter_subjects_to_direct_movies(
     client_session: MovieBoxHttpClient,
     subjects: list[dict[str, Any]],
     limit: int = PAGE_MOVIE_LIMIT,
+    probe_timeout_seconds: float | None = None,
 ) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
@@ -1061,7 +1137,12 @@ async def filter_subjects_to_direct_movies(
         batch_ids = candidates[index:index + PLAYABLE_BATCH_SIZE]
         batch_results = await asyncio.gather(
             *(
-                fetch_direct_playable_movie(client_session, subject)
+                asyncio.wait_for(
+                    fetch_direct_playable_movie(client_session, subject),
+                    timeout=probe_timeout_seconds,
+                )
+                if probe_timeout_seconds
+                else fetch_direct_playable_movie(client_session, subject)
                 for subject in batch_ids
             ),
             return_exceptions=True,
@@ -1364,20 +1445,25 @@ async def fetch_search_payload(query: str) -> dict[str, Any]:
             if len(dedupe_movies([normalize_subject(item) for item in candidates])) >= PAGE_MOVIE_LIMIT:
                 break
 
-        direct_movies = await filter_subjects_to_direct_movies(
-            client_session,
+        fallback_movies = fallback_catalog_from_subjects(
             candidates,
             limit=PAGE_MOVIE_LIMIT,
         )
-        if not direct_movies:
-            direct_movies = fallback_catalog_from_subjects(
-                candidates,
-                limit=PAGE_MOVIE_LIMIT,
-            )
+        direct_movies = await filter_subjects_to_direct_movies(
+            client_session,
+            candidates[:SEARCH_PLAYABLE_PROBE_LIMIT],
+            limit=SEARCH_PLAYABLE_PROBE_LIMIT,
+            probe_timeout_seconds=PLAYABLE_PROBE_TIMEOUT_SECONDS,
+        )
+        merged_movies = merge_catalogs(
+            direct_movies,
+            fallback_movies,
+            limit=PAGE_MOVIE_LIMIT,
+        )
 
     return {
         "query": query,
-        "items": direct_movies[:PAGE_MOVIE_LIMIT],
+        "items": merged_movies[:PAGE_MOVIE_LIMIT],
     }
 
 
