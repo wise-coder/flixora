@@ -1,2 +1,2 @@
 httpx>=0.28.1
-git+https://github.com/Simatwa/moviebox-api.git@cd3e1f6ae25bd976b1c82bd5efd5d8bb13f50b9b
+./moviebox-api
