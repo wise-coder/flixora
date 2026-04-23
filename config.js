@@ -1,6 +1,6 @@
 window.FLIXORA_CONFIG = {
-  // Force the frontend to call the same public origin that served the page.
-  // This is the safest setup when frontend and backend are deployed as one service.
-  apiBase: window.location.origin,
+  // Frontend is deployed separately as a static site, so API calls must target
+  // the live backend service explicitly instead of the current page origin.
+  apiBase: "https://feemx.onrender.com",
   preferConfiguredApiInLocalDev: true,
 };
