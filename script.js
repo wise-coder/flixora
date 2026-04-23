@@ -1665,28 +1665,22 @@ function renderMovieDetailPayload(payload, homeData) {
         return;
       }
 
-      destroyDashPlayer();
-      moviePlayer.pause();
-      moviePlayer.removeAttribute("src");
-      moviePlayer.load();
       moviePlayer.hidden = false;
       moviePlayer.dataset.playbackActive = "1";
-      moviePlayer.preload = "auto";
-      moviePlayer._dashPlayer = window.dashjs.MediaPlayer().create();
-      moviePlayer._dashPlayer.updateSettings({
-        streaming: {
-          abr: {
-            autoSwitchBitrate: { audio: true, video: true },
-          },
-          buffer: {
-            fastSwitchEnabled: true,
-            stableBufferTime: 20,
-            bufferTimeAtTopQuality: 30,
-            bufferTimeAtTopQualityLongForm: 45,
-          },
-        },
+      const alreadyPrimed =
+        moviePlayer._dashPlayer
+        && moviePlayer.dataset.primedManifestUrl === currentPlayback.manifestUrl;
+      if (!alreadyPrimed) {
+        primeCurrentSelection();
+      }
+      moviePlayer.play().catch(() => {
+        primeCurrentSelection();
+        window.setTimeout(() => {
+          moviePlayer.play().catch(() => {
+            window.location.href = currentPlayback.manifestUrl;
+          });
+        }, 150);
       });
-      moviePlayer._dashPlayer.initialize(moviePlayer, currentPlayback.manifestUrl, true);
       if (currentSubtitle) {
         window.setTimeout(() => applySubtitleChoice(currentSubtitle), 250);
       }
@@ -1714,6 +1708,59 @@ function renderMovieDetailPayload(payload, homeData) {
     window.alert("A direct full-movie stream is not available for this title right now.");
   }
 
+  function primeCurrentSelection() {
+    if (!currentPlayback?.playUrl || !moviePlayer) {
+      return;
+    }
+
+    if (currentPlayback.streamType === "dash" && currentPlayback.manifestUrl) {
+      if (!window.dashjs) {
+        return;
+      }
+
+      const alreadyPrimed =
+        moviePlayer._dashPlayer
+        && moviePlayer.dataset.primedManifestUrl === currentPlayback.manifestUrl;
+      if (alreadyPrimed) {
+        return;
+      }
+
+      destroyDashPlayer();
+      moviePlayer.pause();
+      moviePlayer.removeAttribute("src");
+      moviePlayer.load();
+      moviePlayer.preload = "auto";
+      moviePlayer.dataset.primedManifestUrl = currentPlayback.manifestUrl;
+      moviePlayer._dashPlayer = window.dashjs.MediaPlayer().create();
+      moviePlayer._dashPlayer.updateSettings({
+        streaming: {
+          abr: {
+            autoSwitchBitrate: { audio: true, video: true },
+          },
+          buffer: {
+            fastSwitchEnabled: true,
+            stableBufferTime: 20,
+            bufferTimeAtTopQuality: 30,
+            bufferTimeAtTopQualityLongForm: 45,
+          },
+        },
+      });
+      moviePlayer._dashPlayer.initialize(moviePlayer, currentPlayback.manifestUrl, false);
+      return;
+    }
+
+    if (currentPlayback.direct) {
+      const proxiedUrl = buildMediaProxyUrl(currentPlayback.playUrl, `${movie.title}.mp4`);
+      if (moviePlayer.src !== proxiedUrl) {
+        destroyDashPlayer();
+        moviePlayer.pause();
+        moviePlayer.preload = "auto";
+        moviePlayer.src = proxiedUrl;
+        moviePlayer.load();
+      }
+    }
+  }
+
   function applyPlaybackChoice(choice, shouldAutoplay = false) {
     const previousPlayback = currentPlayback;
     currentPlayback = choice || currentPlayback;
@@ -1728,6 +1775,7 @@ function renderMovieDetailPayload(payload, homeData) {
       destroyDashPlayer();
       moviePlayer.pause();
       moviePlayer.removeAttribute("src");
+      delete moviePlayer.dataset.primedManifestUrl;
       delete moviePlayer.dataset.playbackActive;
       moviePlayer.load();
       moviePlayer.hidden = true;
@@ -1754,7 +1802,10 @@ function renderMovieDetailPayload(payload, homeData) {
 
     if (shouldAutoplay) {
       playCurrentSelection();
+      return;
     }
+
+    primeCurrentSelection();
   }
 
   playerWatchButton.onclick = () => {
