@@ -1338,6 +1338,8 @@ function renderMovieDetailPayload(payload, homeData) {
   let isScrubbing = false;
   let lastCenterTapAt = 0;
   let currentSubtitle = null;
+  let activeSubtitleRequestId = 0;
+  const subtitleBlobCache = new Map();
   let currentPlayback = playbackChoices[0] || {
     source: "Moviebox Direct",
     label: "Unavailable",
@@ -1446,6 +1448,32 @@ function renderMovieDetailPayload(payload, homeData) {
     });
   }
 
+  async function getSubtitleBlobUrl(choice) {
+    if (!choice?.url) {
+      return "";
+    }
+
+    const cacheKey = `${choice.url}::${choice.code || ""}::${choice.label || ""}`;
+    const cachedUrl = subtitleBlobCache.get(cacheKey);
+    if (cachedUrl) {
+      return cachedUrl;
+    }
+
+    const response = await fetch(buildSubtitleProxyUrl(
+      choice.url,
+      choice.label || "Caption",
+      choice.code || "und",
+    ));
+    if (!response.ok) {
+      throw new Error(`Subtitle request failed with status ${response.status}`);
+    }
+
+    const subtitleText = await response.text();
+    const blobUrl = URL.createObjectURL(new Blob([subtitleText], { type: "text/vtt;charset=utf-8" }));
+    subtitleBlobCache.set(cacheKey, blobUrl);
+    return blobUrl;
+  }
+
   function enableActiveSubtitleTrack() {
     if (!moviePlayer) {
       return;
@@ -1471,7 +1499,8 @@ function renderMovieDetailPayload(payload, homeData) {
     }
   }
 
-  function applySubtitleChoice(choice) {
+  async function applySubtitleChoice(choice) {
+    const requestId = ++activeSubtitleRequestId;
     currentSubtitle = choice || null;
     clearSubtitleTracks();
 
@@ -1487,16 +1516,31 @@ function renderMovieDetailPayload(payload, homeData) {
       return;
     }
 
+    let trackSrc = "";
+    try {
+      trackSrc = await getSubtitleBlobUrl(currentSubtitle);
+    } catch (error) {
+      if (requestId !== activeSubtitleRequestId) {
+        return;
+      }
+      console.error("Subtitle fetch failed", error);
+      trackSrc = buildSubtitleProxyUrl(
+        currentSubtitle.url,
+        currentSubtitle.label || "Caption",
+        currentSubtitle.code || "und",
+      );
+    }
+
+    if (requestId !== activeSubtitleRequestId || currentSubtitle !== choice) {
+      return;
+    }
+
     const track = document.createElement("track");
     track.dataset.flixoraSubtitle = "1";
-    track.kind = "subtitles";
+    track.kind = "captions";
     track.label = currentSubtitle.label || "Caption";
     track.srclang = currentSubtitle.code || "und";
-    track.src = buildSubtitleProxyUrl(
-      currentSubtitle.url,
-      currentSubtitle.label || "Caption",
-      currentSubtitle.code || "und",
-    );
+    track.src = trackSrc;
     track.default = true;
     track.addEventListener("load", () => {
       enableActiveSubtitleTrack();
@@ -1814,7 +1858,7 @@ function renderMovieDetailPayload(payload, homeData) {
     subtitleSelect.disabled = subtitleChoices.length === 0;
     subtitleSelect.onchange = () => {
       const activeChoice = subtitleChoices.find((choice) => choice.url === subtitleSelect.value) || null;
-      applySubtitleChoice(activeChoice);
+      void applySubtitleChoice(activeChoice);
     };
   }
 
@@ -1949,7 +1993,7 @@ function renderMovieDetailPayload(payload, homeData) {
   };
 
   applyPlaybackChoice(currentPlayback);
-  applySubtitleChoice(null);
+  void applySubtitleChoice(null);
   syncFullscreenButton();
 
   if (seriesCollection && seriesList) {
