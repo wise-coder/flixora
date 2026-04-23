@@ -44,6 +44,8 @@ let apiBaseResolutionPromise = null;
 const VIEW_TRACK_TTL_MS = 12 * 60 * 60 * 1000;
 const API_HEALTHCHECK_TIMEOUT_MS = 5000;
 const API_REQUEST_TIMEOUT_MS = 20000;
+const DEFAULT_PLAYBACK_MAX_RESOLUTION = 720;
+const SLOW_CONNECTION_MAX_RESOLUTION = 480;
 
 const categoryDescriptions = {
   Trending: "Fresh picks pulled from the latest Moviebox homepage feed.",
@@ -635,6 +637,35 @@ function buildSubtitleProxyUrl(url, label = "", language = "") {
   return toApiUrl(`/api/subtitle?${params.toString()}`);
 }
 
+function getPreferredPlaybackResolutionCap() {
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (!connection) {
+    return DEFAULT_PLAYBACK_MAX_RESOLUTION;
+  }
+
+  const effectiveType = String(connection.effectiveType || "").toLowerCase();
+  if (connection.saveData || effectiveType === "slow-2g" || effectiveType === "2g" || effectiveType === "3g") {
+    return SLOW_CONNECTION_MAX_RESOLUTION;
+  }
+
+  return DEFAULT_PLAYBACK_MAX_RESOLUTION;
+}
+
+function playbackResolutionScore(choice, preferredMaxResolution) {
+  const resolution = Number(choice?.resolution) || 0;
+  const streamPriority = choice?.streamType === "dash" ? 3 : (/moviebox direct/i.test(choice?.source || "") ? 2 : 1);
+
+  if (!resolution) {
+    return [streamPriority, -1, -1];
+  }
+
+  if (resolution <= preferredMaxResolution) {
+    return [streamPriority, 2, resolution];
+  }
+
+  return [streamPriority, 1, -resolution];
+}
+
 function buildPlaybackChoices(movie) {
   const choices = [];
   const seen = new Set();
@@ -676,6 +707,20 @@ function buildPlaybackChoices(movie) {
         manifestUrl: normalizeBackendAssetUrl(manifestUrl),
       });
     });
+  });
+
+  const preferredMaxResolution = getPreferredPlaybackResolutionCap();
+  choices.sort((left, right) => {
+    const leftScore = playbackResolutionScore(left, preferredMaxResolution);
+    const rightScore = playbackResolutionScore(right, preferredMaxResolution);
+
+    for (let index = 0; index < leftScore.length; index += 1) {
+      if (leftScore[index] !== rightScore[index]) {
+        return rightScore[index] - leftScore[index];
+      }
+    }
+
+    return 0;
   });
 
   return choices;
@@ -1555,7 +1600,21 @@ function renderMovieDetailPayload(payload, homeData) {
       moviePlayer.load();
       moviePlayer.hidden = false;
       moviePlayer.dataset.playbackActive = "1";
+      moviePlayer.preload = "auto";
       moviePlayer._dashPlayer = window.dashjs.MediaPlayer().create();
+      moviePlayer._dashPlayer.updateSettings({
+        streaming: {
+          abr: {
+            autoSwitchBitrate: { audio: true, video: true },
+          },
+          buffer: {
+            fastSwitchEnabled: true,
+            stableBufferTime: 20,
+            bufferTimeAtTopQuality: 30,
+            bufferTimeAtTopQualityLongForm: 45,
+          },
+        },
+      });
       moviePlayer._dashPlayer.initialize(moviePlayer, currentPlayback.manifestUrl, true);
       if (currentSubtitle) {
         window.setTimeout(() => applySubtitleChoice(currentSubtitle), 100);
@@ -1568,6 +1627,7 @@ function renderMovieDetailPayload(payload, homeData) {
       const proxiedUrl = buildMediaProxyUrl(currentPlayback.playUrl, `${movie.title}.mp4`);
       moviePlayer.hidden = false;
       moviePlayer.dataset.playbackActive = "1";
+      moviePlayer.preload = "auto";
       if (moviePlayer.src !== proxiedUrl) {
         moviePlayer.src = proxiedUrl;
       }

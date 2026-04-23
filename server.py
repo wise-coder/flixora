@@ -851,6 +851,64 @@ def filter_direct_moviebox_options(
     return filtered
 
 
+def prioritize_playable_resource_options(
+    options: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    prioritized: list[dict[str, Any]] = []
+
+    for option in options or []:
+        if not isinstance(option, dict):
+            continue
+
+        playable_qualities = [
+            quality
+            for quality in option.get("qualities") or []
+            if is_playable_quality(quality)
+        ]
+        if not playable_qualities:
+            continue
+
+        playable_qualities.sort(
+            key=lambda quality: (
+                str(quality.get("streamType") or "").strip().lower() == "dash",
+                int(quality.get("resolution") or 0),
+            ),
+            reverse=True,
+        )
+        best_quality = playable_qualities[0]
+        resolutions = sorted(
+            {
+                int(quality.get("resolution") or 0)
+                for quality in playable_qualities
+                if quality.get("resolution")
+            },
+            reverse=True,
+        )
+
+        prioritized.append(
+            {
+                "source": option.get("source") or "Moviebox Source",
+                "resourceLink": best_quality.get("sourceUrl") or best_quality.get("playUrl") or "",
+                "downloadUrl": best_quality.get("downloadUrl") or "",
+                "resolutions": resolutions,
+                "qualities": playable_qualities,
+            }
+        )
+
+    prioritized.sort(
+        key=lambda option: (
+            any(
+                str(quality.get("streamType") or "").strip().lower() == "dash"
+                for quality in option.get("qualities") or []
+            ),
+            is_moviebox_direct_source(option.get("source")),
+            max((int(quality.get("resolution") or 0) for quality in option.get("qualities") or []), default=0),
+        ),
+        reverse=True,
+    )
+    return prioritized
+
+
 def filter_playable_resource_options(
     options: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -1354,7 +1412,7 @@ async def fetch_detail_payload(subject_id: str, home: dict[str, Any]) -> dict[st
             raise LookupError("Only direct-playable full movies are available here.")
 
         playback_options = await fetch_movie_playback_options(client_session, detail)
-        resource_options = filter_direct_moviebox_options(playback_options)
+        resource_options = prioritize_playable_resource_options(playback_options)
         if not resource_options:
             resource_options = filter_playable_resource_options(playback_options)
         if not resource_options:
