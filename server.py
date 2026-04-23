@@ -467,6 +467,20 @@ def build_home_payload(
     }
 
 
+def fallback_catalog_from_subjects(
+    subjects: list[dict[str, Any]],
+    limit: int = PAGE_MOVIE_LIMIT,
+) -> list[dict[str, Any]]:
+    normalized_movies = [
+        normalize_subject(subject)
+        for subject in subjects
+        if isinstance(subject, dict) and is_movie_subject(subject)
+    ]
+    normalized_movies = dedupe_movies(normalized_movies)
+    normalized_movies.sort(key=lambda movie: movie.get("rating", 0), reverse=True)
+    return normalized_movies[:limit]
+
+
 def stale(entry: dict[str, Any], ttl_seconds: int) -> bool:
     return time.time() - entry.get("timestamp", 0) > ttl_seconds
 
@@ -523,6 +537,11 @@ async def fetch_home_payload() -> dict[str, Any]:
             candidate_subjects,
             limit=HOME_CATALOG_LIMIT,
         )
+        if not direct_catalog:
+            direct_catalog = fallback_catalog_from_subjects(
+                candidate_subjects,
+                limit=HOME_CATALOG_LIMIT,
+            )
 
         return build_home_payload(direct_catalog, hero_ids)
 
@@ -1283,6 +1302,11 @@ async def fetch_search_payload(query: str) -> dict[str, Any]:
             candidates,
             limit=PAGE_MOVIE_LIMIT,
         )
+        if not direct_movies:
+            direct_movies = fallback_catalog_from_subjects(
+                candidates,
+                limit=PAGE_MOVIE_LIMIT,
+            )
 
     return {
         "query": query,
@@ -1332,6 +1356,11 @@ async def fetch_special_series_category_titles(category_name: str) -> list[dict[
             candidates,
             limit=PAGE_MOVIE_LIMIT * 2,
         )
+        if not direct_titles:
+            direct_titles = fallback_catalog_from_subjects(
+                candidates,
+                limit=PAGE_MOVIE_LIMIT * 2,
+            )
         matched_titles = [
             movie
             for movie in direct_titles
