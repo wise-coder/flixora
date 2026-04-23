@@ -1446,6 +1446,31 @@ function renderMovieDetailPayload(payload, homeData) {
     });
   }
 
+  function enableActiveSubtitleTrack() {
+    if (!moviePlayer) {
+      return;
+    }
+
+    const targetLabel = currentSubtitle?.label || "";
+    const targetLanguage = currentSubtitle?.code || "";
+    let matchedTrack = null;
+
+    Array.from(moviePlayer.textTracks || []).forEach((textTrack) => {
+      const sameLabel = targetLabel && textTrack.label === targetLabel;
+      const sameLanguage = targetLanguage && textTrack.language === targetLanguage;
+      const shouldShow = Boolean(currentSubtitle) && (sameLabel || sameLanguage);
+
+      textTrack.mode = shouldShow ? "showing" : "disabled";
+      if (shouldShow) {
+        matchedTrack = textTrack;
+      }
+    });
+
+    if (!matchedTrack && currentSubtitle && moviePlayer.textTracks?.length) {
+      moviePlayer.textTracks[0].mode = "showing";
+    }
+  }
+
   function applySubtitleChoice(choice) {
     currentSubtitle = choice || null;
     clearSubtitleTracks();
@@ -1474,14 +1499,16 @@ function renderMovieDetailPayload(payload, homeData) {
     );
     track.default = true;
     track.addEventListener("load", () => {
-      Array.from(moviePlayer.textTracks || []).forEach((textTrack) => {
-        textTrack.mode = "disabled";
-      });
-      if (track.track) {
-        track.track.mode = "showing";
-      }
+      enableActiveSubtitleTrack();
+    });
+    track.addEventListener("error", () => {
+      console.error("Subtitle track failed to load", track.src);
     });
     moviePlayer.appendChild(track);
+
+    window.setTimeout(() => {
+      enableActiveSubtitleTrack();
+    }, 150);
   }
 
   function syncFullscreenButton() {
@@ -1617,7 +1644,7 @@ function renderMovieDetailPayload(payload, homeData) {
       });
       moviePlayer._dashPlayer.initialize(moviePlayer, currentPlayback.manifestUrl, true);
       if (currentSubtitle) {
-        window.setTimeout(() => applySubtitleChoice(currentSubtitle), 100);
+        window.setTimeout(() => applySubtitleChoice(currentSubtitle), 250);
       }
       return;
     }
@@ -1630,6 +1657,9 @@ function renderMovieDetailPayload(payload, homeData) {
       moviePlayer.preload = "auto";
       if (moviePlayer.src !== proxiedUrl) {
         moviePlayer.src = proxiedUrl;
+      }
+      if (currentSubtitle) {
+        window.setTimeout(() => applySubtitleChoice(currentSubtitle), 250);
       }
       moviePlayer.play().catch(() => {
         window.location.href = proxiedUrl;
@@ -1882,6 +1912,9 @@ function renderMovieDetailPayload(payload, homeData) {
     moviePlayer.onloadedmetadata = () => {
       playerTime.textContent = `00:00 / ${formatPlayerTime(moviePlayer.duration)}`;
       progressFill.style.width = "0%";
+      if (currentSubtitle) {
+        window.setTimeout(() => enableActiveSubtitleTrack(), 0);
+      }
     };
 
     moviePlayer.ontimeupdate = () => {
