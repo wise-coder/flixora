@@ -116,7 +116,7 @@ def load_view_counts() -> dict[str, int]:
 
 _cache_lock = threading.Lock()
 _cache: dict[str, Any] = {
-    "home": {"timestamp": 0.0, "value": None},
+    "home": {"timestamp": 0.0, "value": None, "refreshing": False},
     "detail": {},
     "playable": {},
     "search": {},
@@ -632,13 +632,27 @@ def resolve_home(force_refresh: bool = False) -> dict[str, Any]:
     with _cache_lock:
         entry = _cache["home"]
         cached = entry.get("value")
-        should_refresh = force_refresh or cached is None or stale(entry, HOME_CACHE_TTL_SECONDS)
+        cache_is_stale = cached is None or stale(entry, HOME_CACHE_TTL_SECONDS)
+        is_refreshing = bool(entry.get("refreshing"))
 
-    if not should_refresh:
+    if cached is not None:
+        if force_refresh or cache_is_stale:
+            start_background_home_refresh()
         return apply_view_counts_to_payload(deepcopy(cached))
 
+    bundled_payload = load_bundled_home_payload()
+    if bundled_payload is not None:
+        with _cache_lock:
+            entry = _cache["home"]
+            if entry.get("value") is None:
+                entry["value"] = deepcopy(bundled_payload)
+                entry["timestamp"] = 0.0
+        if force_refresh or cache_is_stale or not is_refreshing:
+            start_background_home_refresh()
+        return apply_view_counts_to_payload(deepcopy(bundled_payload))
+
     try:
-        fresh = asyncio.run(fetch_home_payload())
+        fresh = refresh_home_cache_now()
     except Exception:
         with _cache_lock:
             cached = _cache["home"].get("value")
@@ -646,9 +660,46 @@ def resolve_home(force_refresh: bool = False) -> dict[str, Any]:
             return apply_view_counts_to_payload(deepcopy(cached))
         raise
 
-    with _cache_lock:
-        _cache["home"] = {"timestamp": time.time(), "value": fresh}
     return apply_view_counts_to_payload(deepcopy(fresh))
+
+
+def refresh_home_cache_now() -> dict[str, Any]:
+    try:
+        fresh = asyncio.run(fetch_home_payload())
+    finally:
+        with _cache_lock:
+            _cache["home"]["refreshing"] = False
+
+    with _cache_lock:
+        _cache["home"]["timestamp"] = time.time()
+        _cache["home"]["value"] = deepcopy(fresh)
+    return deepcopy(fresh)
+
+
+def background_home_refresh_once() -> None:
+    try:
+        payload = refresh_home_cache_now()
+        print(
+            "[flixora] Refreshed home cache "
+            f"with {len(payload.get('catalog', []))} catalog items.",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"[flixora] Background home cache refresh failed: {exc}", flush=True)
+
+
+def start_background_home_refresh() -> bool:
+    with _cache_lock:
+        if _cache["home"].get("refreshing"):
+            return False
+        _cache["home"]["refreshing"] = True
+
+    threading.Thread(
+        target=background_home_refresh_once,
+        name="flixora-home-refresh",
+        daemon=True,
+    ).start()
+    return True
 
 
 def background_home_warm_loop(stop_event: threading.Event) -> None:
@@ -656,15 +707,7 @@ def background_home_warm_loop(stop_event: threading.Event) -> None:
         return
 
     while not stop_event.is_set():
-        try:
-            payload = resolve_home(force_refresh=True)
-            print(
-                "[flixora] Warmed home cache "
-                f"with {len(payload.get('catalog', []))} catalog items.",
-                flush=True,
-            )
-        except Exception as exc:
-            print(f"[flixora] Background home cache warm failed: {exc}", flush=True)
+        start_background_home_refresh()
 
         if stop_event.wait(HOME_WARM_INTERVAL_SECONDS):
             return
