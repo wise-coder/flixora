@@ -46,6 +46,7 @@ const API_HEALTHCHECK_TIMEOUT_MS = 5000;
 const API_REQUEST_TIMEOUT_MS = 20000;
 const DEFAULT_PLAYBACK_MAX_RESOLUTION = 720;
 const SLOW_CONNECTION_MAX_RESOLUTION = 480;
+const STATIC_FALLBACK_HOME_URL = "fallback-home.json?v=20260423a";
 
 const categoryDescriptions = {
   Trending: "Fresh picks pulled from the latest Moviebox homepage feed.",
@@ -300,6 +301,82 @@ async function fetchJson(path) {
   return response.json();
 }
 
+async function fetchStaticJson(path) {
+  const response = await fetch(path, { headers: { Accept: "application/json" } });
+  if (!response.ok) {
+    throw new Error(`Static request failed for ${path} with status ${response.status}`);
+  }
+  return response.json();
+}
+
+function normalizeCategoryLabel(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function movieMatchesFallbackCategory(movie, categoryName) {
+  const target = normalizeCategoryLabel(categoryName);
+  if (!target) {
+    return false;
+  }
+
+  const category = normalizeCategoryLabel(movie?.category);
+  if (category === target) {
+    return true;
+  }
+
+  return Array.isArray(movie?.genres) && movie.genres.some((genre) => normalizeCategoryLabel(genre) === target);
+}
+
+function buildFallbackCategoryPayload(homeData, categoryName) {
+  const catalog = Array.isArray(homeData?.catalog) ? homeData.catalog : [];
+  let movies;
+
+  if (normalizeCategoryLabel(categoryName) === "trending") {
+    movies = [...catalog].sort((left, right) => (Number(right?.rating) || 0) - (Number(left?.rating) || 0));
+  } else {
+    movies = catalog.filter((movie) => movieMatchesFallbackCategory(movie, categoryName));
+    movies.sort((left, right) => (Number(right?.rating) || 0) - (Number(left?.rating) || 0));
+  }
+
+  const featured = movies[0] || catalog[0] || {};
+  const keepBrowsing = catalog.filter((movie) => movie?.id !== featured?.id);
+
+  return {
+    requestedCategory: categoryName || "Trending",
+    description: "",
+    featured,
+    movies: movies.slice(0, PAGE_MOVIE_LIMIT),
+    keepBrowsing: keepBrowsing.slice(0, PAGE_MOVIE_LIMIT),
+    categories: homeData?.categories || [],
+  };
+}
+
+function buildFallbackSearchPayload(homeData, query) {
+  const searchTerm = String(query || "").trim().toLowerCase();
+  const catalog = Array.isArray(homeData?.catalog) ? homeData.catalog : [];
+  const items = !searchTerm
+    ? []
+    : catalog.filter((movie) => {
+      const title = String(movie?.title || "").toLowerCase();
+      const desc = String(movie?.desc || "").toLowerCase();
+      const genres = Array.isArray(movie?.genres) ? movie.genres.join(" ").toLowerCase() : "";
+      return title.includes(searchTerm) || desc.includes(searchTerm) || genres.includes(searchTerm);
+    });
+
+  return {
+    mode: "search",
+    query,
+    items: items.slice(0, PAGE_MOVIE_LIMIT),
+  };
+}
+
+async function getStaticFallbackHomeData() {
+  if (!window.__flixoraStaticHomePromise) {
+    window.__flixoraStaticHomePromise = fetchStaticJson(STATIC_FALLBACK_HOME_URL);
+  }
+  return window.__flixoraStaticHomePromise;
+}
+
 function describeAppError(error, contextLabel = "this page") {
   const statusPrefix = error?.status ? `Error ${error.status}: ` : "";
   const detailSuffix = error?.details ? ` ${error.details}` : "";
@@ -483,7 +560,12 @@ async function registerMovieView(movieId) {
 async function getHomeData(force = false) {
   if (!homePayload || force) {
     const refreshParam = force ? "?refresh=1" : "";
-    homePayload = await fetchJson(`/api/home${refreshParam}`);
+    try {
+      homePayload = await fetchJson(`/api/home${refreshParam}`);
+    } catch (error) {
+      console.warn("Using static fallback home data", error);
+      homePayload = await getStaticFallbackHomeData();
+    }
   }
   return homePayload;
 }
@@ -2223,17 +2305,29 @@ async function loadHomePage() {
 async function loadCategoryPage() {
   const searchQuery = getSearchQueryFromUrl();
   if (searchQuery) {
-    const searchPayload = await fetchJson(`/api/search?q=${encodeURIComponent(searchQuery)}`);
-    categoryPayload = {
-      mode: "search",
-      query: searchQuery,
-      items: searchPayload.items || [],
-    };
+    try {
+      const searchPayload = await fetchJson(`/api/search?q=${encodeURIComponent(searchQuery)}`);
+      categoryPayload = {
+        mode: "search",
+        query: searchQuery,
+        items: searchPayload.items || [],
+      };
+    } catch (error) {
+      console.warn("Using static fallback search data", error);
+      const fallbackHomeData = homePayload || await getHomeData();
+      categoryPayload = buildFallbackSearchPayload(fallbackHomeData, searchQuery);
+    }
     renderSearchPageData(categoryPayload);
     return;
   }
 
-  categoryPayload = await fetchJson(`/api/category?category=${encodeURIComponent(getUrlCategory())}`);
+  try {
+    categoryPayload = await fetchJson(`/api/category?category=${encodeURIComponent(getUrlCategory())}`);
+  } catch (error) {
+    console.warn("Using static fallback category data", error);
+    const fallbackHomeData = homePayload || await getHomeData();
+    categoryPayload = buildFallbackCategoryPayload(fallbackHomeData, getUrlCategory());
+  }
   categoryPayload.mode = "category";
   renderCategoryPageData(categoryPayload);
 }

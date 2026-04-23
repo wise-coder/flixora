@@ -17,5 +17,6 @@ cp \
   styles.css \
   script.js \
   config.js \
+  fallback-home.json \
   logo.svg \
   "$OUT_DIR"/
