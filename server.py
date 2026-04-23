@@ -48,6 +48,8 @@ HOME_PAGE_REQUEST_TIMEOUT_SECONDS = 6
 PLAYABLE_PROBE_TIMEOUT_SECONDS = 4
 HOME_PLAYABLE_PROBE_LIMIT = 12
 SEARCH_PLAYABLE_PROBE_LIMIT = 16
+HOME_WARM_INITIAL_DELAY_SECONDS = 2
+HOME_WARM_INTERVAL_SECONDS = 10 * 60
 DIRECT_SOURCE_PREFIX = "moviebox direct"
 SPECIAL_SERIES_CATEGORY_QUERIES = {
     "Korean Drama": ["korean drama", "kdrama"],
@@ -84,6 +86,11 @@ def resolve_server_host() -> str:
     if str(os.getenv("PORT", "")).strip():
         return "0.0.0.0"
     return DEFAULT_HOST
+
+
+def background_home_warm_enabled() -> bool:
+    raw_value = str(os.getenv("FLIXORA_DISABLE_BACKGROUND_WARM_CACHE", "")).strip().lower()
+    return raw_value not in {"1", "true", "yes", "on"}
 
 
 def load_view_counts() -> dict[str, int]:
@@ -642,6 +649,25 @@ def resolve_home(force_refresh: bool = False) -> dict[str, Any]:
     with _cache_lock:
         _cache["home"] = {"timestamp": time.time(), "value": fresh}
     return apply_view_counts_to_payload(deepcopy(fresh))
+
+
+def background_home_warm_loop(stop_event: threading.Event) -> None:
+    if HOME_WARM_INITIAL_DELAY_SECONDS > 0 and stop_event.wait(HOME_WARM_INITIAL_DELAY_SECONDS):
+        return
+
+    while not stop_event.is_set():
+        try:
+            payload = resolve_home(force_refresh=True)
+            print(
+                "[flixora] Warmed home cache "
+                f"with {len(payload.get('catalog', []))} catalog items.",
+                flush=True,
+            )
+        except Exception as exc:
+            print(f"[flixora] Background home cache warm failed: {exc}", flush=True)
+
+        if stop_event.wait(HOME_WARM_INTERVAL_SECONDS):
+            return
 
 
 def build_resource_options(detail: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1681,6 +1707,20 @@ class FlixoraHandler(SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def do_HEAD(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/health":
+            self.respond_json(
+                {
+                    "ok": True,
+                    "service": "flixora",
+                    "timestamp": int(time.time()),
+                },
+                include_body=False,
+            )
+            return
+        super().do_HEAD()
+
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/api/movie-view":
@@ -1895,14 +1935,20 @@ class FlixoraHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def respond_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
+    def respond_json(
+        self,
+        payload: dict[str, Any],
+        status: HTTPStatus = HTTPStatus.OK,
+        include_body: bool = True,
+    ) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(body)
+        if include_body:
+            self.wfile.write(body)
 
 
 def main() -> None:
@@ -1912,6 +1958,23 @@ def main() -> None:
     args = parser.parse_args()
 
     server = ThreadingHTTPServer((args.host, args.port), FlixoraHandler)
+    stop_event = threading.Event()
+    warm_thread: threading.Thread | None = None
+    if background_home_warm_enabled():
+        warm_thread = threading.Thread(
+            target=background_home_warm_loop,
+            args=(stop_event,),
+            name="flixora-home-warmer",
+            daemon=True,
+        )
+        warm_thread.start()
+        print(
+            "[flixora] Background home cache warmer enabled "
+            f"(initial delay: {HOME_WARM_INITIAL_DELAY_SECONDS}s, "
+            f"interval: {HOME_WARM_INTERVAL_SECONDS}s).",
+            flush=True,
+        )
+
     print(f"Serving FeemX at http://{args.host}:{args.port}")
     print("Press Ctrl+C to stop.")
     try:
@@ -1919,6 +1982,9 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        stop_event.set()
+        if warm_thread and warm_thread.is_alive():
+            warm_thread.join(timeout=1)
         server.server_close()
 
 
