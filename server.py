@@ -708,6 +708,24 @@ def is_direct_playable_quality(quality: dict[str, Any]) -> bool:
     return is_direct_media_url(play_url)
 
 
+def is_playable_quality(quality: dict[str, Any]) -> bool:
+    if not isinstance(quality, dict):
+        return False
+
+    play_url = first_url(
+        quality.get("playUrl"),
+        quality.get("downloadUrl"),
+        quality.get("sourceUrl"),
+    )
+    stream_type = str(quality.get("streamType") or "").strip().lower()
+    manifest_url = first_url(quality.get("manifestUrl"))
+
+    if stream_type == "dash":
+        return bool(play_url and manifest_url)
+
+    return bool(play_url and is_direct_media_url(play_url))
+
+
 def filter_direct_moviebox_options(
     options: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -723,6 +741,54 @@ def filter_direct_moviebox_options(
             quality
             for quality in option.get("qualities") or []
             if is_direct_playable_quality(quality)
+        ]
+        if not qualities:
+            continue
+
+        resolutions = sorted(
+            {
+                int(quality.get("resolution") or 0)
+                for quality in qualities
+                if quality.get("resolution")
+            },
+            reverse=True,
+        )
+        best_quality = qualities[0]
+
+        filtered.append(
+            {
+                **option,
+                "downloadUrl": first_url(
+                    best_quality.get("downloadUrl"),
+                    best_quality.get("playUrl"),
+                    option.get("downloadUrl"),
+                ),
+                "resourceLink": first_url(
+                    best_quality.get("sourceUrl"),
+                    best_quality.get("playUrl"),
+                    option.get("resourceLink"),
+                ),
+                "resolutions": resolutions,
+                "qualities": qualities,
+            }
+        )
+
+    return filtered
+
+
+def filter_playable_resource_options(
+    options: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+
+    for option in options or []:
+        if not isinstance(option, dict):
+            continue
+
+        qualities = [
+            quality
+            for quality in option.get("qualities") or []
+            if is_playable_quality(quality)
         ]
         if not qualities:
             continue
@@ -1206,11 +1272,12 @@ async def fetch_detail_payload(subject_id: str, home: dict[str, Any]) -> dict[st
         if movie.get("mediaType") != "movie" or not is_movie_subject(detail):
             raise LookupError("Only direct-playable full movies are available here.")
 
-        resource_options = filter_direct_moviebox_options(
-            await fetch_movie_playback_options(client_session, detail)
-        )
+        playback_options = await fetch_movie_playback_options(client_session, detail)
+        resource_options = filter_direct_moviebox_options(playback_options)
         if not resource_options:
-            raise LookupError("No Moviebox Direct full-movie source is available for this title.")
+            resource_options = filter_playable_resource_options(playback_options)
+        if not resource_options:
+            raise LookupError("No playable full-movie source is available for this title.")
 
         series_items = await fetch_series_items(client_session, detail, movie)
 

@@ -612,11 +612,6 @@ function buildPlaybackChoices(movie) {
   const seen = new Set();
 
   (movie.resourceOptions || []).forEach((option) => {
-    const sourceName = String(option?.source || "").trim();
-    if (!/^moviebox direct/i.test(sourceName)) {
-      return;
-    }
-
     const optionQualities = Array.isArray(option.qualities) && option.qualities.length
       ? option.qualities
       : [{
@@ -634,7 +629,9 @@ function buildPlaybackChoices(movie) {
       const streamType = quality.streamType || option.streamType || (playUrl.toLowerCase().includes(".mpd") ? "dash" : "file");
       const manifestUrl = quality.manifestUrl || option.manifestUrl || "";
       const key = `${option.source}::${quality.resolution || 0}::${streamType}::${manifestUrl || playUrl}`;
-      if (!playUrl || streamType === "dash" || !isDirectMediaUrl(playUrl) || seen.has(key)) {
+      const isDashPlayback = streamType === "dash" && Boolean(manifestUrl);
+      const isDirectPlayback = streamType !== "dash" && isDirectMediaUrl(playUrl);
+      if (!playUrl || (!isDashPlayback && !isDirectPlayback) || seen.has(key)) {
         return;
       }
 
