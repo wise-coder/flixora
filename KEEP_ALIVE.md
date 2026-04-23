@@ -39,6 +39,36 @@ Recommended settings:
 5. Schedule: every `5 minutes`
 6. Save and enable the cronjob
 
+## Option 3: GitHub Actions
+
+This repo now includes:
+
+`/.github/workflows/keep-render-awake.yml`
+
+It pings:
+
+```text
+https://feemx.onrender.com/api/health
+```
+
+every `5 minutes`.
+
+To use it:
+
+1. Push the latest repo changes to GitHub
+2. Open the repo `Actions` tab
+3. Enable workflows if GitHub asks
+4. Confirm the workflow named `Keep Render Awake` is present
+
+## Do Not Auto-Redeploy Every 5 Minutes
+
+That is not a safe fix.
+
+- Redeploying every 5 minutes restarts the backend repeatedly
+- active users can be interrupted during restart
+- build/deploy cycles add more instability, not less
+- it does not solve slow upstream movie-detail requests
+
 ## Notes
 
 - Render free web services can still restart occasionally even if they do not go idle.
